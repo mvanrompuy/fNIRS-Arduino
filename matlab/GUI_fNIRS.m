@@ -22,7 +22,7 @@ function varargout = GUI_fNIRS(varargin)
 
 % Edit the above text to modify the response to help GUI_fNIRS
 
-% Last Modified by GUIDE v2.5 27-Mar-2014 20:23:41
+% Last Modified by GUIDE v2.5 31-Mar-2014 03:12:46
 
 
 % Begin initialization code - DO NOT EDIT
@@ -72,8 +72,37 @@ function varargout = GUI_fNIRS_OutputFcn(~, eventdata, handles)
 % Get default command line output from handles structure
 varargout{1} = handles.output;
 
+%
+function calculateFFT(data,window,handles)
+colorMap = hsv(size(data,2)); %Create color for each channel
+L = size(data,1);
+FS = str2double(get(handles.textSamplingSpeed,'String'));
+
+switch(window)
+    case 1
+        W = hamming(L);
+    otherwise
+        W = ones(L,1);
+end
+
+data(:,1:3) = bsxfun(@times,data,W); % Apply window
+X(:,1:3) = fft(data(:,1:3))          % Calculate FFT
+
+set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
+X = 20*log10(abs(X([1:L/2],1:3)))
+set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
+drawnow;
+% for p = 1:3
+%     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
+% end
+
+
+
 % Realtime plot
  function realtime_plot(handles)
+     clearvars n x y1 y2 y3 y4 trainingData trainingIndex networkCreated;
+     
+     s = -1;
      n = 1;
      x = 0;
      y1 = 0;
@@ -81,12 +110,18 @@ varargout{1} = handles.output;
      y3 = 0;
      y4 = 0; % Training output
      
+     refreshTime = 0; % Refresh time (samples) for FFT
+     frameSize = 10; % Amount of samples to use for FFT
+     frame = zeros(frameSize,3);
+          
      global trainingData;
      global trainingIndex;
      global networkCreated;
+     global haltExecution;
      
-     trainingData = [];
      trainingIndex = 1;
+     networkCreated = 0;
+     haltExecution = 0;
     try
         % Open serial connection
         s = serial('COM3', 'BaudRate', 19600); % Select COM port and set baud rate to 115200
@@ -96,15 +131,33 @@ varargout{1} = handles.output;
         warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
         fopen(s); % Open connection.
         pause(2) % Arduino auto-resets at new connection! Give time to initialize. 
+        
+        set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
+        
+        handles.plotFFTHandle = plot(x,y1,x,y2,x,y3,'LineWidth',2);
+        
+        % Update handles structure
+        guidata(handles.output, handles);
+        
+        % Create xlabel
+        xlabel('Frequency (Hz)');
 
+        % Create ylabel
+        ylabel('Amplitude');
+
+        % Create title
+        title('Realtime FFT');
+        
+        
 %         figureHandle = figure('NumberTitle','off','Name','Realtime data','Visible','off');
 %         axesHandle = axes('Parent',figureHandle,'YGrid','on','XGrid','on');
         
-        axesHandle = handles.axesRealTime;
-        hold on;
-
-        plotHandle = plot(axesHandle,x,y1,x,y2,x,y3,x,y4,'LineWidth',2);
-
+        set(handles.output,'CurrentAxes',handles.axesRealTime);
+        handles.plotHandle = plot(x,y1,x,y2,x,y3,x,y4,'LineWidth',2);
+        
+        % Update handles structure
+        guidata(handles.output, handles);
+        
         % Create xlabel
         xlabel('Time (s)');
 
@@ -120,7 +173,7 @@ varargout{1} = handles.output;
         fscanf(s,'%c') % Receive return message (confirmation) (%c = all chars, including whitespace)
 
         %        while(get(handles.radioRealTime,'Value') == 1)
-        while(1)
+        while(haltExecution == 0)
            % Read input as CSV, ignoring the commas (unsigned int = %u, text = %*c).
             sampledData(1,1:4) = fscanf(s,'%u%*c');
         
@@ -129,19 +182,20 @@ varargout{1} = handles.output;
             y2(n) = sampledData(1,3);
             y3(n) = sampledData(1,4);
             y4(n) = 0;
-            set(plotHandle,{'YData'},{y1;y2;y3;y4},'Xdata',x);
+            set(handles.plotHandle,{'YData'},{y1;y2;y3;y4},'Xdata',x);
             drawnow;
-            set(handles.textSamplingSpeed,'String',num2str(n/(x(n)-x(1))));
-            n = n + 1;
+            FS = n/(x(n)-x(1));
+            set(handles.textSamplingSpeed,'String',num2str(FS));
+                        
             if(get(handles.radioRealTime,'Value') == 0)
-               delete(plotHandle);
-               fprintf(s,'e\n') % Write stop command to Arduino.
-               break;
+               break; % Halt execution on deselection
             elseif(get(handles.toggleTraining,'Value') == 1)
                 task = get(handles.menuTrainState,'Value');
                 trainingData(trainingIndex,1:4) = [sampledData(2:4) task]
                 trainingIndex = trainingIndex + 1
             elseif(networkCreated == 1)
+                clearvars inputs targets outputs net tr;
+                
                 inputs = trainingData(:,1:3)';
                 targets = trainingData(:,4)';
 
@@ -161,7 +215,7 @@ varargout{1} = handles.output;
                 
                 % Test the Network
                 errors = gsubtract(targets,outputs);
-                performance = perform(net,targets,outputs)
+                performance = perform(net,targets,outputs);
 
                 % View the Network
                 view(net)
@@ -177,13 +231,39 @@ varargout{1} = handles.output;
                 
                 networkCreated = 2;
             elseif(networkCreated == 2)
-                net(sampledData(2:4),'useParallel','yes')
+                y4 = net(y3,'useParallel','yes')
+
+% % Plot input samples with PLOTPV (Plot perceptron input/target vectors)
+% figure(1)
+% plotpv(x,y);
             end
+            
+            % Calculate FFT
+            refreshTime = ceil(FS); % Refresh every second
+            if(n > frameSize)
+                if(rem(n,refreshTime) == 0) % calculate FFT every "refreshTime" (when enough samples have been gathered)
+                    frame(:,1:3) = [y1(n-frameSize+1:n)' y2(n-frameSize+1:n)' y3(n-frameSize+1:n)']
+                    calculateFFT(frame,1,handles);
+                end
+            end
+            
+            n = n + 1;
         end
-        fclose(s);
+        if(strcmp(get(s,'Status'),'open') == 1)
+            fprintf(s,'e\n');
+            fclose(s);
+        end
+        
+        cla(handles.axesRealTime);
+        cla(handles.axesFFT);
+        if(haltExecution == 1) % Figure close request function has run
+            delete(gcf);
+        end
     catch exception % In case of error, always close connection first.
-        fprintf(s,'e\n') % Write stop command to Arduino.
-        fclose(s);
+        if(strcmp(get(s,'Status'),'open') == 1)
+            fprintf(s,'e\n'); % Write stop command to Arduino.
+            fclose(s);
+        end
         throw(exception);
     end
 
@@ -276,10 +356,10 @@ function buttonAddTask_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
     % Get selected task and add it to array
-    index = str2num(get(handles.editIndex,'String'));
+    index = str2double(get(handles.editIndex,'String'));
     temp = get(handles.arrayTasks,'Data');
     task = get(handles.listTasks,'Value');
-    duration = str2num(get(handles.editTaskDuration,'String'));
+    duration = str2double(get(handles.editTaskDuration,'String'));
     
     if(size(task,2) > 1)
         set(handles.textStatus,'String','Please select exactly 1 task!');
@@ -347,12 +427,12 @@ function buttonStart_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 if(get(handles.radioSamples,'Value') == 1)
-    numberSamples = str2num(get(handles.editSamples,'String'));
+    numberSamples = str2double(get(handles.editSamples,'String'));
     if(numberSamples > 0)
         ReceiveDataFromArduino(numberSamples, [], 0);
     end
 elseif(get(handles.radioTasks,'Value'))
-    amountTasks = str2num(get(handles.editIndex,'String')) - 1
+    amountTasks = str2double(get(handles.editIndex,'String')) - 1
     tasks = get(handles.arrayTasks,'Data')
     if(amountTasks > 0)
         ReceiveDataFromArduino(0, tasks, amountTasks);
@@ -467,10 +547,33 @@ global networkCreated;
 if(get(hObject,'Value') == 0)
     set(hObject,'String','Create network');
     networkCreated = 0;
+    clearvars trainingData trainingIndex;
 else
     networkCreated = 0;
     set(hObject,'String','Reset training');
-    trainingData = [];
-    trainingIndex = 1;
     networkCreated = 1;
 end
+
+
+% --- Executes when user attempts to close figure1.
+function figure1_CloseRequestFcn(hObject, eventdata, handles)
+% hObject    handle to figure1 (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Display a question dialog box
+   global haltExecution;
+   selection = questdlg('Close this program?',...
+      'Close Request Function',...
+      'Yes','No','Yes'); 
+   switch selection, 
+      case 'Yes',
+         % Give realtime processing script time to exit cleanly.
+         if(get(handles.radioRealTime,'Value') == 1)
+             haltExecution = 1;
+         else
+             delete(gcf);
+         end
+      case 'No'
+      return 
+   end

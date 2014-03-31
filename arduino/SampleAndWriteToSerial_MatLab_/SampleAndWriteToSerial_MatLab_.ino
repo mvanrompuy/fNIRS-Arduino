@@ -66,18 +66,20 @@ void loop() {
             break;
         }
 
-        //Delay to provide correct measurements
+        // Clear ADC capacitor
+        analogRead(A1);
         analogRead(A0);
-        delay(2);
+        //Delay to provide correct measurements
+        delay(20); // Dont't make to short -> needs time to settle
         // read the input on analog pin 0:
         sensorValue = analogRead(A0);
 //        sensorValue = sensorValue + analogRead(A0);
 //        sensorValue = sensorValue/2;
         //Delay to provide correct measurements
-        delay(2);
+        delay(1);
         digitalWrite(2,0);
         digitalWrite(3,0);
-        delay(14);
+        delay(40);
         data += sensorValue;
         data += ",";
         if (Serial.available() > 0) {
