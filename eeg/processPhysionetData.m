@@ -1,6 +1,6 @@
 % Process Physionet eemnmidb database to a usable format in matlab
 
-function fullData = processPhysionetData(subj)
+function [fullData,FS] = processPhysionetData(subj)
 
 taskID = [];
 
