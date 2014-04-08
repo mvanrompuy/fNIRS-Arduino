@@ -1,15 +1,23 @@
-%clear all;
+clear all;
 
 % Get Physionet data for one of the subjects
-%[data,FS] = processPhysionetData(1);
+[data,FS] = processPhysionetData(1);
+
+% Detrend data
+data(:,2:4) = detrend(data(:,2:4));
+
+% Standardize data
+data(:,2:4) = zscore(data(:,2:4));
 
 % 1-D wavelet decomposition to different subbands of EEG
 levels = 4;
 
-for c = 2:4 % 3 channels to subband decode
-    [C,L] = wavedec(data(:,c),levels,'coif5'); %or db4
-    % Ectension mode used for reducing border effects
-    ST = dwtmode('status')
+% Set extension mode to periodization (smallest length)
+dwtmode('per')
+ST = dwtmode('status'); % Mode used for reducing border effects
+
+for c = 2:4 % 3 channels to subband decode  
+    [C(:,c-1),L(:,c-1)] = wavedec(data(:,c),levels,'coif5'); %or db4
     index = 1;
     
     % Show decomposition of signal
@@ -20,11 +28,11 @@ for c = 2:4 % 3 channels to subband decode
         if(p == iterations) % Type = 'a' (approximation)
             N = levels;
             type = 'a';
-            fRangeStr = sprintf('Frequency range: %u - %g Hz',0,(FS/2)/(2^(p-1)));
+            fRangeStr = sprintf('cA%u | Frequency range: %u - %g Hz',N,0,(FS/2)/(2^(p-1)));
         else % Type = 'd' (detail)
             N = p;
             type = 'd';
-            fRangeStr = sprintf('Frequency range: %g - %g Hz',(FS/2)/(2^p),(FS/2)/(2^(p-1)));
+            fRangeStr = sprintf('cD%u | Frequency range: %g - %g Hz',N,(FS/2)/(2^p),(FS/2)/(2^(p-1)));
         end;
         subplot(iterations,1,iterations-p+1);
         X = wrcoef(type,C,L,'coif5',N);
@@ -32,6 +40,79 @@ for c = 2:4 % 3 channels to subband decode
         title(fRangeStr);
     end
 end
+
+windowSize = 32; % Window size for original sampling speed (e.g. half sampling speed -> windowSize/2). Must contain at least 1 coefficient at lowest decomposition level!
+
+            % Non-overlapping sliding window
+
+% CREATE TARGETS FOR CLASSIFICATION
+        % Create matrix containing the target vectors
+                % 0: 0 0
+                % 1: 1 0        -> e.g. if classifier outputs  0.9955 0.0013 -> target = 1
+                % 2: 0 1        
+data(:,5) = data(:,5)+1; % No task = 0 allowed (see documentation ind2vec)
+targetVector = full(ind2vec([1 2]));
+
+intTargets = downsample(data(:,5),windowSize); % Keep ever n'th sample
+
+for i = 1:size(intTargets,1)
+    intValue = intTargets(i,1);
+    targets(i,:) = targetVector(intValue,:); % Replace integer by corresponding vector
+end
+
+% CALCULATE FEATURES FOR CLASSIFICATION
+        % Select appropriate frequency subbands to use for classification
+        % Motor activity is mostly seen in µ (8-12 Hz) and beta band (18-25 Hz)
+        % => cD2, cD3 and cD4 from each channel (3 subbands x 3 channels)
+                % for c = 1:3
+                %     cD2(:,c) = detcoef(C(:,c),L(:,c),2); % Extract detail (D) coefficients
+                %     cD3(:,c) = detcoef(C(:,c),L(:,c),3);
+                %     cD4(:,c) = detcoef(C(:,c),L(:,c),4);
+                % end
+                % numberCoef = [0,size(cD2,1),size(cD3,1),size(cD4,1)]; % level 1, 2, 3, 4
+
+column = 1; % Feature column
+features = zeros(ceil(size(data,1)/windowSize),9);
+
+for level = 2:4
+    ws = windowSize/(2^level) % Change window size according to level of decomposition to get equal length of feature vector
+    tempCoef = []; % Clear array
+
+    % Extract detail (D) coefficients
+    for c = 1:3
+        tempCoef(:,c) = detcoef(C(:,c),L(:,c),level);
+    end
+    
+    % Calculate Mean absolute value (MAV) on wavelet coefficients as classifier feature
+    for c = 1:3
+        n = 1;
+        m = 1;
+        while n < size(tempCoef,1)
+            if(n < size(tempCoef,1)-ws)
+                features(m,column) = meanabs(tempCoef(n:n+ws-1));
+            else
+                features(m,column) = meanabs(tempCoef(n:end));
+            end
+            n = n + ws;
+            m = m + 1;
+        end
+        column = column + 1;
+    end
+end                
+
+% Standardize data for increased accuracy in classification
+
+% for i = 1:9
+%     features(:,i) = zscore(features(:,i));
+% end
+
+% PRINCIPAL COMPONENT ANALYSIS before classification? -> Compression of
+% classifiers
+
+    % REPLACE WAVEDEC BY MWDTDEC?
+
+    % Neural network can be extended to multiple output classes
+    % SVM only supports 2 outputs classes
 
                 % EEGMotor = load('-mat', 'Subject1_1D');
 
