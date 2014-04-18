@@ -25,9 +25,9 @@ function Hb = MBLL(dataArray)
 % VARIABLES
 
 % Test arrays
-% dataArray = [1 1 2 3;
-%               2 4 5 6;
-%               3 7 8 9]
+% dataArray = [0.1 0.1 0.2 0.3;
+%               0.2 0.4 0.5 0.6;
+%               0.3 0.7 0.8 0.9]
 
 % Wavelength 1 = 765 nm (trough-hole LED)
 % Wavelength 5 = 850 nm (SMD LED)
@@ -59,23 +59,33 @@ lp = 3.5 % Source detector distance in cm (measurement geometry -> chord distanc
 
 extCoef = [ExHbO1 ExHbR1; ExHbO2 ExHbR2]        % Extinction coefficients array
 
-deltaODArray = dataArray(:,1);       % Copy first column (sample time)
+deltaODArray = zeros(size(dataArray));
+dataArray = dataArray + 0.5; % Move from [0 1] to [0.5 1.5] to avoid log(0) (undefined)
 
+% for i = 1:size(dataArray,1)-1 % Rows
+%     for j = 2:size(dataArray,2) % Columns (containing measurements)
+%         tNow = dataArray(i,j);
+%         tNext = dataArray(i+1,j);
+%         deltaODArray(i,j) = -log(tNext/tNow); % Calculate and store delta OD
+%     end
+% end
+dataArray
 for i = 1:size(dataArray,1)-1 % Rows
-    for j = 2:size(dataArray,2) % Columns (containing measurements)
-        tNow = dataArray(i,j); tNext = dataArray(i+1,j);
-        deltaODArray(i,j) = -log(tNext/tNow); % Calculate and store delta OD
+    for j = 1:size(dataArray,2) % Columns (containing measurements)
+        deltaODArray(i,j) = -log(dataArray(i,j)/mean(dataArray(:,j))); % Calculate and store delta OD
     end
 end
+deltaODArray
 
 % Based on https://mail.nmr.mgh.harvard.edu/pipermail//homer-users/2006-July/000124.html
 
-deltaODArray(:,3) = deltaODArray(:,3)/(lp*DPF1);
-deltaODArray(:,4) = deltaODArray(:,4)/(lp*DPF2);
+deltaODArray(:,1) = deltaODArray(:,1)/(lp*DPF1);
+deltaODArray(:,2) = deltaODArray(:,2)/(lp*DPF2);
 
 extInv = inv(extCoef'*extCoef)*extCoef'; %Linear inversion operator
 
-for j = 3:size(deltaODArray,2) % Columns (containing measurements)
+% Sum temporal changes to get time course
+for j = 1:size(deltaODArray,2) % Columns (containing measurements)
     temp = 0;
     for i = 1:size(deltaODArray,1) % Rows
         deltaODArray(i,j) = temp + deltaODArray(i,j);
@@ -83,26 +93,16 @@ for j = 3:size(deltaODArray,2) % Columns (containing measurements)
     end
 end
 
-Hb = extInv*deltaODArray(:,3:4)'; % Find HbO and HbR
+Hb = extInv*deltaODArray(:,1:2)'; % Find HbO and HbR
+HbT = Hb(1,:) - Hb(2,:);
 
-%temporalChanges = 1/lp*extinctionCoef*diffPathlength*deltaODArray(:,3:4)';
-
-% % Sum temporal changes to get time course
-% for j = 1:size(temporalChanges,2) % Columns (containing measurements)
-%     temp = 0;
-%     for i = 1:size(temporalChanges,1) % Rows
-%         temporalChanges(i,j) = temp + temporalChanges(i,j);
-%         temp = temporalChanges(i,j);
-%     end
-% end
+Hb = [Hb',HbT'];
 
 % processed = temporalChanges;
 
 % HbR
 % HbO
 % HbTotal = HbR - HbR
-
-
 
 % Processing steps: LP filtered (0.8 Hz), normalize data, HP (0.01 Hz),
 % negative ln
