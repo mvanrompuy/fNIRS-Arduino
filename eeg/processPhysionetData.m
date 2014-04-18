@@ -61,6 +61,7 @@ for trial = 1:size(activeTrials,2)
     %Keep channels 9 (C3), 11 (Cz) and 13 (C4) -> best for sensorimotor classification
     % + channel 65 -> contains task annotation
     currBlock = [record{9,1} record{11,1} record{13,1}];
+    columns = size(currBlock,1);
     
     % Add time data
     time = [0:1/FS:((size(currBlock,1)-1)/FS)]' + lastTime; % Continue from time last block

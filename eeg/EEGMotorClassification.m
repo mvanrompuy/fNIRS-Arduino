@@ -1,13 +1,10 @@
 clear all;
-
+clear all;
 % Get Physionet data for one of the subjects
 [data,FS] = processPhysionetData(1);
 
 % Detrend data
 data(:,2:4) = detrend(data(:,2:4));
-
-% Standardize data
-data(:,2:4) = zscore(data(:,2:4));
 
 % 1-D wavelet decomposition to different subbands of EEG
 levels = 4;
@@ -16,8 +13,10 @@ levels = 4;
 dwtmode('per')
 ST = dwtmode('status'); % Mode used for reducing border effects
 
+wavelet = 'coif5';
+
 for c = 2:4 % 3 channels to subband decode  
-    [C(:,c-1),L(:,c-1)] = wavedec(data(:,c),levels,'coif5'); %or db4
+    [C(:,c-1),L(:,c-1)] = wavedec(data(:,c),levels,wavelet);
     index = 1;
     
     % Show decomposition of signal
@@ -35,13 +34,13 @@ for c = 2:4 % 3 channels to subband decode
             fRangeStr = sprintf('cD%u | Frequency range: %g - %g Hz',N,(FS/2)/(2^p),(FS/2)/(2^(p-1)));
         end;
         subplot(iterations,1,iterations-p+1);
-        X = wrcoef(type,C,L,'coif5',N);
+        X = wrcoef(type,C,L,wavelet,N);
         plot(X);
         title(fRangeStr);
     end
 end
 
-windowSize = 32; % Window size for original sampling speed (e.g. half sampling speed -> windowSize/2). Must contain at least 1 coefficient at lowest decomposition level!
+windowSize = 128/2; % Window size for original sampling speed (e.g. half sampling speed -> windowSize/2). Must contain at least 1 coefficient at lowest decomposition level!
 
             % Non-overlapping sliding window
 
@@ -55,10 +54,13 @@ targetVector = full(ind2vec([1 2]));
 
 intTargets = downsample(data(:,5),windowSize); % Keep ever n'th sample
 
-for i = 1:size(intTargets,1)
-    intValue = intTargets(i,1);
-    targets(i,:) = targetVector(intValue,:); % Replace integer by corresponding vector
-end
+targets = intTargets;
+
+% %USED FOR NN's with more than two output classes
+% for i = 1:size(intTargets,1)
+%     intValue = intTargets(i,1);
+%     targets(i,:) = targetVector(intValue,:); % Replace integer by corresponding vector
+% end
 
 % CALCULATE FEATURES FOR CLASSIFICATION
         % Select appropriate frequency subbands to use for classification
@@ -72,7 +74,7 @@ end
                 % numberCoef = [0,size(cD2,1),size(cD3,1),size(cD4,1)]; % level 1, 2, 3, 4
 
 column = 1; % Feature column
-features = zeros(ceil(size(data,1)/windowSize),9);
+features = zeros(ceil(size(data,1)/windowSize),18); % Change number of features
 
 for level = 2:4
     ws = windowSize/(2^level) % Change window size according to level of decomposition to get equal length of feature vector
@@ -90,8 +92,10 @@ for level = 2:4
         while n < size(tempCoef,1)
             if(n < size(tempCoef,1)-ws)
                 features(m,column) = meanabs(tempCoef(n:n+ws-1));
+                features(m,column+9) = rms(tempCoef(n:n+ws-1));
             else
                 features(m,column) = meanabs(tempCoef(n:end));
+                features(m,column+9) = rms(tempCoef(n:end));
             end
             n = n + ws;
             m = m + 1;
@@ -99,6 +103,34 @@ for level = 2:4
         column = column + 1;
     end
 end                
+
+
+% Standardize data
+features = zscore(features);
+
+% avg = 0;
+% repetitions = 40;
+% mis = zeros(1,repetitions);
+% for i = 1:repetitions
+%     [outputs,mis(i)] = NNClassifier(features,targets);
+% end
+% 
+% avg = mean(mis)
+% stddev = std(mis)
+
+
+SVMClassifier(features,targets);
+
+
+
+
+
+
+
+
+
+
+
 
 % Standardize data for increased accuracy in classification
 
