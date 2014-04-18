@@ -94,80 +94,72 @@ set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*F
 drawnow;
 % for p = 1:3
 %     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
-% end
+% end 
+        
+function s = openSerialConnection(com,baud)
+    s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
+    set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
 
+    % Don't show warning
+    warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
+    fopen(s); % Open connection.
+    pause(2) % Arduino auto-resets at new connection! Give time to initialize.
 
-
+function closeSerialConnection(s)
+    if(strcmp(get(s,'Status'),'open') == 1)
+        fprintf(s,'e\n');
+        fclose(s);
+    end
+    
 % Realtime plot
  function realtime_plot(handles)
-     clearvars n x y1 y2 y3 y4 trainingData trainingIndex networkCreated;
+    clearvars n x y1 y2 y3 y4 trainingData trainingIndex networkCreated;
+
+    s = -1;
+    n = 1;
+    x = 0;
+    y1 = 0;
+    y2 = 0;
+    y3 = 0;
+    y4 = 0; % Training output
+
+    refreshTime = 0; % Refresh time (samples) for FFT
+    frameSize = 100; % Amount of samples to use for FFT
+    frame = zeros(frameSize,3);
+
+    COM = 'COM3';
+    baudRate = 28800;
+    
+    global trainingData;
+    global trainingIndex;
+    global networkCreated;
+    global haltExecution;
+
+    trainingIndex = 1;
+    networkCreated = 0;
+    haltExecution = 0;
      
-     s = -1;
-     n = 1;
-     x = 0;
-     y1 = 0;
-     y2 = 0;
-     y3 = 0;
-     y4 = 0; % Training output
+    % Setup FFT axes
+    set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
+    handles.plotFFTHandle = plot(x,y1,x,y2,x,y3,'LineWidth',2);
+    guidata(handles.output, handles); % Update handles structure
+
+    xlabel('Frequency (Hz)'); % Create xlabel  
+    ylabel('Amplitude'); % Create ylabel
+    title('Realtime FFT'); % Create title
+
+    % Setup plot axes
+    set(handles.output,'CurrentAxes',handles.axesRealTime);
+    handles.plotHandle = plot(x,y1,x,y2,x,y3,x,y4,'LineWidth',2);
+    guidata(handles.output, handles); % Update handles structure
+
+    xlabel('Time (s)'); % Create xlabel
+    ylabel('Amplitude'); % Create ylabel
+    title('Realtime data'); % Create title 
      
-     refreshTime = 0; % Refresh time (samples) for FFT
-     frameSize = 10; % Amount of samples to use for FFT
-     frame = zeros(frameSize,3);
-          
-     global trainingData;
-     global trainingIndex;
-     global networkCreated;
-     global haltExecution;
-     
-     trainingIndex = 1;
-     networkCreated = 0;
-     haltExecution = 0;
     try
         % Open serial connection
-        s = serial('COM3', 'BaudRate', 19600); % Select COM port and set baud rate to 115200
-        set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
-
-        % Don't show warning
-        warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
-        fopen(s); % Open connection.
-        pause(2) % Arduino auto-resets at new connection! Give time to initialize. 
-        
-        set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
-        
-        handles.plotFFTHandle = plot(x,y1,x,y2,x,y3,'LineWidth',2);
-        
-        % Update handles structure
-        guidata(handles.output, handles);
-        
-        % Create xlabel
-        xlabel('Frequency (Hz)');
-
-        % Create ylabel
-        ylabel('Amplitude');
-
-        % Create title
-        title('Realtime FFT');
-        
-        
-%         figureHandle = figure('NumberTitle','off','Name','Realtime data','Visible','off');
-%         axesHandle = axes('Parent',figureHandle,'YGrid','on','XGrid','on');
-        
-        set(handles.output,'CurrentAxes',handles.axesRealTime);
-        handles.plotHandle = plot(x,y1,x,y2,x,y3,x,y4,'LineWidth',2);
-        
-        % Update handles structure
-        guidata(handles.output, handles);
-        
-        % Create xlabel
-        xlabel('Time (s)');
-
-        % Create ylabel
-        ylabel('Amplitude');
-
-        % Create title
-        title('Realtime data');
-           
-%       set(figureHandle,'Visible','on');        
+        s = openSerialConnection(COM,baudRate);
 
         fprintf(s,'s\n') % Write start command to Arduino.
         fscanf(s,'%c') % Receive return message (confirmation) (%c = all chars, including whitespace)
@@ -232,10 +224,6 @@ drawnow;
                 networkCreated = 2;
             elseif(networkCreated == 2)
                 y4 = net(y3,'useParallel','yes')
-
-% % Plot input samples with PLOTPV (Plot perceptron input/target vectors)
-% figure(1)
-% plotpv(x,y);
             end
             
             % Calculate FFT
@@ -249,10 +237,7 @@ drawnow;
             
             n = n + 1;
         end
-        if(strcmp(get(s,'Status'),'open') == 1)
-            fprintf(s,'e\n');
-            fclose(s);
-        end
+        closeSerialConnection(s);
         
         cla(handles.axesRealTime);
         cla(handles.axesFFT);
@@ -260,10 +245,7 @@ drawnow;
             delete(gcf);
         end
     catch exception % In case of error, always close connection first.
-        if(strcmp(get(s,'Status'),'open') == 1)
-            fprintf(s,'e\n'); % Write stop command to Arduino.
-            fclose(s);
-        end
+        closeSerialConnection(s);
         throw(exception);
     end
 
