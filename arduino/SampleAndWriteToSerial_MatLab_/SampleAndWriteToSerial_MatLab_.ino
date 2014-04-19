@@ -52,10 +52,11 @@
 #include <Wire.h>
 
 #define AD0 B1001000           // 7-bit address
-#define conf B10011000         // Configuration register - Warning: don't use continuous mode, conversion can happen on switch between LEDs on or of => error
+#define ADConfig B10011000         // Configuration register - Warning: don't use continuous mode, conversion can happen on switch between LEDs on or of => value wrong
 
 unsigned int sensorValue = 0;       // Unsigned 2-byte int
-byte confRegister;
+int configRegister = ADConfig;      // Set initial value
+int confRegisterState;
 int samplesRequested = 0;
 int n = 0;
 int sendData = 0;
@@ -65,11 +66,11 @@ int adcBusy = 1;
 void setup() {
   // initialize serial communication to PC at 19200 bits per second:
   Serial.begin(28800);
-
+  Serial.println(configRegister); // Send configuration settings at startup
   // Start I²C connection to ADC
   Wire.begin();                  // Join bus as master
   Wire.beginTransmission(AD0);   // Start transmission with ADC
-  Wire.write(conf);
+  Wire.write(configRegister);
   Wire.endTransmission();
 
   // declare pin 8 to be an output:
@@ -120,7 +121,7 @@ void loop() {
         }
         
         Wire.beginTransmission(AD0);
-        Wire.write(conf);              // Set bit 7 -> start single conversion
+        Wire.write(configRegister);              // Set bit 7 -> start single conversion
         Wire.endTransmission();        // Write qeued byte;
         
         adcBusy = 1;
@@ -133,10 +134,10 @@ void loop() {
             sensorValue = sensorValue << 8;   // Shift
             sensorValue += Wire.read();       // Second byte
             
-            confRegister = Wire.read();       // Configuration register
+            confRegisterState = Wire.read();       // Configuration register
 
-            adcBusy = bitRead(confRegister,7);
-                // if(bitRead(confRegister,7) == 0) {// If 8th bit is unset -> ADC conversion done
+            adcBusy = bitRead(confRegisterState,7);
+                // if(bitRead(confRegisterState,7) == 0) {// If 8th bit is unset -> ADC conversion done
                 //   Serial.println("ADC conversion done!");
                 // }
           }
@@ -147,8 +148,12 @@ void loop() {
         data += ",";
         delay(25);
         if (Serial.available() > 0) {
-          if (Serial.read() == 101) { //Stop command ('e')
+          int incomingByte = Serial.read();
+          if (incomingByte == 101) { // Stop command ('e')
             sendData = 0;
+          } 
+          if(incomingByte == 99) { // ADC configuration command ('a' followed by byte to set configuration registor of ADS1100)
+            configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
           }
         }
       }

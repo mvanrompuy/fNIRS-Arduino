@@ -22,7 +22,7 @@ function varargout = GUI_fNIRS(varargin)
 
 % Edit the above text to modify the response to help GUI_fNIRS
 
-% Last Modified by GUIDE v2.5 31-Mar-2014 03:12:46
+% Last Modified by GUIDE v2.5 18-Apr-2014 23:14:33
 
 
 % Begin initialization code - DO NOT EDIT
@@ -74,37 +74,37 @@ varargout{1} = handles.output;
 
 %
 function calculateFFT(data,window,handles)
-colorMap = hsv(size(data,2)); %Create color for each channel
-L = size(data,1);
-FS = str2double(get(handles.textSamplingSpeed,'String'));
+    colorMap = hsv(size(data,2)); %Create color for each channel
+    L = size(data,1);
+    FS = str2double(get(handles.textSamplingSpeed,'String'));
 
-switch(window)
-    case 1
-        W = hamming(L);
-    otherwise
-        W = ones(L,1);
-end
+    switch(window)
+        case 1
+            W = hamming(L);
+        otherwise
+            W = ones(L,1);
+    end
 
-data(:,1:3) = bsxfun(@times,data,W); % Apply window
-X(:,1:3) = fft(data(:,1:3))          % Calculate FFT
+    data(:,1:3) = bsxfun(@times,data,W); % Apply window
+    X(:,1:3) = fft(data(:,1:3));         % Calculate FFT
 
-set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
-X = 20*log10(abs(X([1:L/2],1:3)))
-set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
-drawnow;
-% for p = 1:3
-%     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
-% end 
+    set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
+    X = 20*log10(abs(X([1:L/2],1:3)));
+    set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
+    drawnow;
+    % for p = 1:3
+    %     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
+    % end 
         
-function s = openSerialConnection(com,baud)
+function [s,configADC] = openSerialConnection(com,baud)
     s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
     set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
 
     % Don't show warning
     warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
     fopen(s); % Open connection.
-    pause(2) % Arduino auto-resets at new connection! Give time to initialize.
-
+    configADC = fscanf(s,'%u');  % or pause(2) % Arduino auto-resets at new connection! Give time to initialize.
+    
 function closeSerialConnection(s)
     if(strcmp(get(s,'Status'),'open') == 1)
         fprintf(s,'e\n');
@@ -114,8 +114,7 @@ function closeSerialConnection(s)
 % Realtime plot
  function realtime_plot(handles)
     clearvars n x y1 y2 y3 y4 trainingData trainingIndex networkCreated;
-
-    s = -1;
+    
     n = 1;
     x = 0;
     y1 = 0;
@@ -134,6 +133,9 @@ function closeSerialConnection(s)
     global trainingIndex;
     global networkCreated;
     global haltExecution;
+    global configADC;
+    global s;
+    s = -1;
 
     trainingIndex = 1;
     networkCreated = 0;
@@ -159,10 +161,12 @@ function closeSerialConnection(s)
      
     try
         % Open serial connection
-        s = openSerialConnection(COM,baudRate);
-
+        [s,configADC] = openSerialConnection(COM,baudRate);
+   
+        set(handles.textADCConfiguration,'String',dec2bin(configADC,8)) % Receive ADC configuration register setting
+        
         fprintf(s,'s\n') % Write start command to Arduino.
-        fscanf(s,'%c') % Receive return message (confirmation) (%c = all chars, including whitespace)
+        set(handles.textStatus,'String',fscanf(s,'%c')) % Receive return message (confirmation) (%c = all chars, including whitespace)
 
         %        while(get(handles.radioRealTime,'Value') == 1)
         while(haltExecution == 0)
@@ -230,7 +234,7 @@ function closeSerialConnection(s)
             refreshTime = ceil(FS); % Refresh every second
             if(n > frameSize)
                 if(rem(n,refreshTime) == 0) % calculate FFT every "refreshTime" (when enough samples have been gathered)
-                    frame(:,1:3) = [y1(n-frameSize+1:n)' y2(n-frameSize+1:n)' y3(n-frameSize+1:n)']
+                    frame(:,1:3) = [y1(n-frameSize+1:n)' y2(n-frameSize+1:n)' y3(n-frameSize+1:n)'];
                     calculateFFT(frame,1,handles);
                 end
             end
@@ -270,6 +274,10 @@ set(handles.textSamplingSpeed,'Visible','on');
 set(handles.menuTrainState,'Visible','on');
 set(handles.toggleTraining,'Visible','on');
 set(handles.toggleNetwork,'Visible','on');
+set(handles.textADCConfiguration,'Visible','on');
+set(handles.textADCGain,'Visible','on');
+set(handles.menuADCGain,'Visible','on');
+set(handles.menuADCGain,'Value',1); % Set gain to initial value (Gain 1)
 realtime_plot(handles);
     
 % --- Executes on button press in radioTasks.
@@ -288,6 +296,9 @@ set(handles.textSamplingSpeed,'Visible','off');
 set(handles.menuTrainState,'Visible','off');
 set(handles.toggleTraining,'Visible','off');
 set(handles.toggleNetwork,'Visible','off');
+set(handles.textADCConfiguration,'Visible','off');
+set(handles.textADCGain,'Visible','off');
+set(handles.menuADCGain,'Visible','off');
 
 % --- Executes on button press in radioSamples.
 function radioSamples_Callback(hObject, eventdata, handles)
@@ -305,6 +316,9 @@ set(handles.textSamplingSpeed,'Visible','off');
 set(handles.menuTrainState,'Visible','off');
 set(handles.toggleTraining,'Visible','off');
 set(handles.toggleNetwork,'Visible','off');
+set(handles.textADCConfiguration,'Visible','off');
+set(handles.textADCGain,'Visible','off');
+set(handles.menuADCGain,'Visible','off');
 
 % --- Executes during object creation, after setting all properties.
 function listTasks_CreateFcn(hObject, eventdata, handles)
@@ -537,6 +551,7 @@ else
 end
 
 
+
 % --- Executes when user attempts to close figure1.
 function figure1_CloseRequestFcn(hObject, eventdata, handles)
 % hObject    handle to figure1 (see GCBO)
@@ -559,3 +574,49 @@ function figure1_CloseRequestFcn(hObject, eventdata, handles)
       case 'No'
       return 
    end
+
+
+% --- Executes on selection change in menuADCGain.
+function menuADCGain_Callback(hObject, eventdata, handles)
+% hObject    handle to menuADCGain (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: contents = cellstr(get(hObject,'String')) returns menuADCGain contents as cell array
+%        contents{get(hObject,'Value')} returns selected item from menuADCGain
+
+global configADC;
+global s;
+
+gainSetting = get(hObject,'Value');
+
+switch gainSetting
+    case 1 % Gain 1 - 00
+        configADC = bitset(configADC,1,0);
+        configADC = bitset(configADC,2,0);
+    case 2 % Gain 2 - 01
+        configADC = bitset(configADC,1,1);
+        configADC = bitset(configADC,2,0);
+    case 3 % Gain 4 - 10
+        configADC = bitset(configADC,1,0);
+        configADC = bitset(configADC,2,1);
+    case 4 % Gain 8 - 11
+        configADC = bitset(configADC,1,1);
+        configADC = bitset(configADC,2,1);
+end;
+
+set(handles.textADCConfiguration,'String',dec2bin(configADC,8));
+updateGainStr = sprintf('c%u\n',configADC)
+fprintf(s,updateGainStr);
+
+% --- Executes during object creation, after setting all properties.
+function menuADCGain_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to menuADCGain (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
