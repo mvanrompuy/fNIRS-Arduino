@@ -425,27 +425,17 @@ function buttonStart_Callback(hObject, eventdata, handles)
 if(get(handles.radioSamples,'Value') == 1)
     numberSamples = str2double(get(handles.editSamples,'String'));
     if(numberSamples > 0)
-        ReceiveDataFromArduino(numberSamples, [], 0);
+        fNIRS(numberSamples, [], 0);
     end
 elseif(get(handles.radioTasks,'Value'))
     amountTasks = str2double(get(handles.editIndex,'String')) - 1
     tasks = get(handles.arrayTasks,'Data')
     if(amountTasks > 0)
-        ReceiveDataFromArduino(0, tasks, amountTasks);
+        fNIRS(0, tasks, amountTasks);
     else
         
     end
 end
-
-
-function editSamples_Callback(hObject, eventdata, handles)
-% hObject    handle to editSamples (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Hints: get(hObject,'String') returns contents of editSamples as text
-%        str2double(get(hObject,'String')) returns contents of editSamples as a double
-
 
 % --- Executes during object creation, after setting all properties.
 function axesRealTime_CreateFcn(hObject, eventdata, handles)
@@ -470,16 +460,6 @@ function buttonTrainTask_Callback(hObject, eventdata, handles)
 % hObject    handle to buttonTrainTask (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-
-
-% --- Executes on button press in togglebutton5.
-function togglebutton5_Callback(hObject, eventdata, handles)
-% hObject    handle to togglebutton5 (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Hint: get(hObject,'Value') returns toggle state of togglebutton5
-
 
 % --- Executes on selection change in menuTrainState.
 function menuTrainState_Callback(hObject, eventdata, handles)
@@ -606,7 +586,7 @@ switch gainSetting
 end;
 
 set(handles.textADCConfiguration,'String',dec2bin(configADC,8));
-updateGainStr = sprintf('c%u\n',configADC)
+updateGainStr = sprintf('c%u\n',configADC);
 fprintf(s,updateGainStr);
 
 % --- Executes during object creation, after setting all properties.
