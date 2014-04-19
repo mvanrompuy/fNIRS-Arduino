@@ -1,0 +1,2 @@
+objs = instrfind
+fclose(objs);
