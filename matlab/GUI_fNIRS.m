@@ -1,3 +1,10 @@
+
+% haltExecution:
+%     -1 - Exit GUI
+%     0 - Continue sampling
+%     1 - Stop sampling
+%     2 - Send updated values to Arduino on next run
+
 function varargout = GUI_fNIRS(varargin)
 % GUI_FNIRS MATLAB code for GUI_fNIRS.fig
 %      GUI_FNIRS, by itself, creates a new GUI_FNIRS or raises the existing
@@ -22,7 +29,7 @@ function varargout = GUI_fNIRS(varargin)
 
 % Edit the above text to modify the response to help GUI_fNIRS
 
-% Last Modified by GUIDE v2.5 18-Apr-2014 23:14:33
+% Last Modified by GUIDE v2.5 21-Apr-2014 22:55:37
 
 
 % Begin initialization code - DO NOT EDIT
@@ -33,6 +40,7 @@ gui_State = struct('gui_Name',       mfilename, ...
                    'gui_OutputFcn',  @GUI_fNIRS_OutputFcn, ...
                    'gui_LayoutFcn',  [] , ...
                    'gui_Callback',   []);
+               
 if nargin && ischar(varargin{1})
     gui_State.gui_Callback = str2func(varargin{1});
 end
@@ -61,7 +69,8 @@ guidata(hObject, handles);
 % UIWAIT makes GUI_fNIRS wait for user response (see UIRESUME)
 % uiwait(handles.figure1);
 
-
+closeAllSerialConnections();
+   
 % --- Outputs from this function are returned to the command line.
 function varargout = GUI_fNIRS_OutputFcn(~, eventdata, handles) 
 % varargout  cell array for returning output args (see VARARGOUT);
@@ -72,31 +81,9 @@ function varargout = GUI_fNIRS_OutputFcn(~, eventdata, handles)
 % Get default command line output from handles structure
 varargout{1} = handles.output;
 
-%
-function calculateFFT(data,window,handles)
-    colorMap = hsv(size(data,2)); %Create color for each channel
-    L = size(data,1);
-    FS = str2double(get(handles.textSamplingSpeed,'String'));
-
-    switch(window)
-        case 1
-            W = hamming(L);
-        otherwise
-            W = ones(L,1);
-    end
-
-    data(:,1:3) = bsxfun(@times,data,W); % Apply window
-    X(:,1:3) = fft(data(:,1:3));         % Calculate FFT
-
-    set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
-    X = 20*log10(abs(X([1:L/2],1:3)));
-    set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
-    drawnow;
-    % for p = 1:3
-    %     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
-    % end 
-        
-function [s,configADC] = openSerialConnection(com,baud)
+function s = openSerialConnection(handles,com,baud)
+    global configADC;
+    
     s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
     set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
 
@@ -104,6 +91,10 @@ function [s,configADC] = openSerialConnection(com,baud)
     warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
     fopen(s); % Open connection.
     configADC = fscanf(s,'%u');  % or pause(2) % Arduino auto-resets at new connection! Give time to initialize.
+    samplingDelay = fscanf(s,'%u');
+        
+    set(handles.textADCConfiguration,'String',dec2bin(configADC,8)); % Receive ADC configuration register setting
+    setSamplingDelayGUI(handles,samplingDelay);
     
 function closeSerialConnection(s)
     if(strcmp(get(s,'Status'),'open') == 1)
@@ -113,8 +104,8 @@ function closeSerialConnection(s)
     
 % Realtime plot
  function realtime_plot(handles)
-    clearvars n x y1 y2 y3 y4 trainingData trainingIndex networkCreated;
-    
+    clearvars n FS x y1 y2 y3 y4 sampledData trainingData trainingIndex networkCreated;
+
     n = 1;
     x = 0;
     y1 = 0;
@@ -125,18 +116,13 @@ function closeSerialConnection(s)
     refreshTime = 0; % Refresh time (samples) for FFT
     frameSize = 100; % Amount of samples to use for FFT
     frame = zeros(frameSize,3);
-
-    COM = 'COM3';
-    baudRate = 28800;
     
     global trainingData;
     global trainingIndex;
     global networkCreated;
     global haltExecution;
-    global configADC;
     global s;
-    s = -1;
-
+    
     trainingIndex = 1;
     networkCreated = 0;
     haltExecution = 0;
@@ -160,13 +146,8 @@ function closeSerialConnection(s)
     title('Realtime data'); % Create title 
      
     try
-        % Open serial connection
-        [s,configADC] = openSerialConnection(COM,baudRate);
-   
-        set(handles.textADCConfiguration,'String',dec2bin(configADC,8)) % Receive ADC configuration register setting
-        
-        fprintf(s,'s\n') % Write start command to Arduino.
-        set(handles.textStatus,'String',fscanf(s,'%c')) % Receive return message (confirmation) (%c = all chars, including whitespace)
+        fprintf(s,'s\n'); % Write start command to Arduino.
+        set(handles.textStatus,'String',fscanf(s,'%c')); % Receive return message (confirmation) (%c = all chars, including whitespace)
 
         %        while(get(handles.radioRealTime,'Value') == 1)
         while(haltExecution == 0)
@@ -241,20 +222,50 @@ function closeSerialConnection(s)
             
             n = n + 1;
         end
-        closeSerialConnection(s);
+        fprintf(s,'e/n'); % Stop sampling
         
         cla(handles.axesRealTime);
         cla(handles.axesFFT);
-        if(haltExecution == 1) % Figure close request function has run
+        stopSamplingGUIUpdate(handles);
+        if(haltExecution == -1) % GUI close request function has run
+            closeSerialConnection(s);
             delete(gcf);
         end
     catch exception % In case of error, always close connection first.
         closeSerialConnection(s);
         throw(exception);
     end
+    
+%
+function calculateFFT(data,window,handles)
+colorMap = hsv(size(data,2)); %Create color for each channel
+L = size(data,1);
+FS = str2double(get(handles.titleSamplingSpeed,'String'));
+
+switch(window)
+    case 1
+        W = hamming(L);
+    otherwise
+        W = ones(L,1);
+end
+
+data(:,1:3) = bsxfun(@times,data,W); % Apply window
+X(:,1:3) = fft(data(:,1:3));         % Calculate FFT
+
+set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
+X = 20*log10(abs(X([1:L/2],1:3)));
+set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
+drawnow;
+% for p = 1:3
+%     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
+% end 
+    
+% Update GUI on stop sampling
+function stopSamplingGUIUpdate(handles)
+    set(handles.buttonStart,'Value',0);
 
 % Makes radio buttons mutually exclusive
- function mutual_exclude(off)
+function mutual_exclude(off)
 	set(off,'Value',0);
     
 
@@ -267,18 +278,20 @@ function radioRealTime_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioRealTime
 off = [handles.radioSamples;handles.radioTasks];
 mutual_exclude(off);
-set(handles.editSamples,'Visible','off');
-set(handles.panelTasks,'Visible','off');
-set(handles.panelRealTime,'Visible','on');
-set(handles.textSamplingSpeed,'Visible','on');
-set(handles.menuTrainState,'Visible','on');
-set(handles.toggleTraining,'Visible','on');
-set(handles.toggleNetwork,'Visible','on');
-set(handles.textADCConfiguration,'Visible','on');
-set(handles.textADCGain,'Visible','on');
-set(handles.menuADCGain,'Visible','on');
-set(handles.menuADCGain,'Value',1); % Set gain to initial value (Gain 1)
-realtime_plot(handles);
+% set(handles.editSamples,'Visible','off');
+% set(handles.panelTasks,'Visible','off');
+% set(handles.panelRealTime,'Visible','on');
+% set(handles.titleSamplingSpeed,'Visible','on');
+% set(handles.textSamplingSpeed,'Visible','on');
+% set(handles.menuTrainState,'Visible','on');
+% set(handles.toggleTraining,'Visible','on');
+% set(handles.toggleNetwork,'Visible','on');
+% set(handles.textADCConfiguration,'Visible','on');
+% set(handles.titleADCConfiguration,'Visible','on');
+% set(handles.titleADCGain,'Visible','on');
+% set(handles.menuADCGain,'Visible','on');
+% set(handles.menuADCGain,'Value',1); % Set gain to initial value (Gain 1)
+% realtime_plot(handles);
     
 % --- Executes on button press in radioTasks.
 function radioTasks_Callback(hObject, eventdata, handles)
@@ -289,16 +302,16 @@ function radioTasks_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioTasks
 off = [handles.radioSamples;handles.radioRealTime];
 mutual_exclude(off);
-set(handles.editSamples,'Visible','off');
-set(handles.panelTasks,'Visible','on');
-set(handles.panelRealTime,'Visible','off');
-set(handles.textSamplingSpeed,'Visible','off');
-set(handles.menuTrainState,'Visible','off');
-set(handles.toggleTraining,'Visible','off');
-set(handles.toggleNetwork,'Visible','off');
-set(handles.textADCConfiguration,'Visible','off');
-set(handles.textADCGain,'Visible','off');
-set(handles.menuADCGain,'Visible','off');
+% set(handles.editSamples,'Visible','off');
+% set(handles.panelTasks,'Visible','on');
+% set(handles.panelRealTime,'Visible','off');
+% set(handles.titleSamplingSpeed,'Visible','off');
+% set(handles.menuTrainState,'Visible','off');
+% set(handles.toggleTraining,'Visible','off');
+% set(handles.toggleNetwork,'Visible','off');
+% set(handles.titleADCConfiguration,'Visible','off');
+% set(handles.titleADCGain,'Visible','off');
+% set(handles.menuADCGain,'Visible','off');
 
 % --- Executes on button press in radioSamples.
 function radioSamples_Callback(hObject, eventdata, handles)
@@ -309,16 +322,16 @@ function radioSamples_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioSamples
 off = [handles.radioTasks;handles.radioRealTime];
 mutual_exclude(off);
-set(handles.editSamples,'Visible','on');
-set(handles.panelTasks,'Visible','off');
-set(handles.panelRealTime,'Visible','off');
-set(handles.textSamplingSpeed,'Visible','off');
-set(handles.menuTrainState,'Visible','off');
-set(handles.toggleTraining,'Visible','off');
-set(handles.toggleNetwork,'Visible','off');
-set(handles.textADCConfiguration,'Visible','off');
-set(handles.textADCGain,'Visible','off');
-set(handles.menuADCGain,'Visible','off');
+% set(handles.editSamples,'Visible','on');
+% set(handles.panelTasks,'Visible','off');
+% set(handles.panelRealTime,'Visible','off');
+% set(handles.titleSamplingSpeed,'Visible','off');
+% set(handles.menuTrainState,'Visible','off');
+% set(handles.toggleTraining,'Visible','off');
+% set(handles.toggleNetwork,'Visible','off');
+% set(handles.titleADCConfiguration,'Visible','off');
+% set(handles.titleADCGain,'Visible','off');
+% set(handles.menuADCGain,'Visible','off');
 
 % --- Executes during object creation, after setting all properties.
 function listTasks_CreateFcn(hObject, eventdata, handles)
@@ -412,31 +425,7 @@ function editTaskDuration_Callback(hObject, eventdata, handles)
 % hObject    handle to editTaskDuration (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-
-% Hints: get(hObject,'String') returns contents of editTaskDuration as text
-%        str2double(get(hObject,'String')) returns contents of editTaskDuration as a double
-
-
-% --- Executes on button press in buttonStart.
-function buttonStart_Callback(hObject, eventdata, handles)
-% hObject    handle to buttonStart (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-if(get(handles.radioSamples,'Value') == 1)
-    numberSamples = str2double(get(handles.editSamples,'String'));
-    if(numberSamples > 0)
-        fNIRS(numberSamples, [], 0);
-    end
-elseif(get(handles.radioTasks,'Value'))
-    amountTasks = str2double(get(handles.editIndex,'String')) - 1
-    tasks = get(handles.arrayTasks,'Data')
-    if(amountTasks > 0)
-        fNIRS(0, tasks, amountTasks);
-    else
-        
-    end
-end
-
+    
 % --- Executes during object creation, after setting all properties.
 function axesRealTime_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to axesRealTime (see GCBO)
@@ -545,11 +534,11 @@ function figure1_CloseRequestFcn(hObject, eventdata, handles)
       'Yes','No','Yes'); 
    switch selection, 
       case 'Yes',
-         % Give realtime processing script time to exit cleanly.
-         if(get(handles.radioRealTime,'Value') == 1)
-             haltExecution = 1;
+         if(haltExecution == 0)
+             % Give running functions time to exit cleanly.
+             haltExecution = -1;
          else
-             delete(gcf);
+            delete(gcf);
          end
       case 'No'
       return 
@@ -600,3 +589,141 @@ function menuADCGain_CreateFcn(hObject, eventdata, handles)
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');
 end
+
+% --- Executes on slider movement.
+function sliderSamplingDelay_Callback(hObject, eventdata, handles)
+% hObject    handle to sliderSamplingDelay (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+global haltExecution;
+
+haltExecution = 2; % Sampling delay is updated on next run
+
+roundedValue = round(get(hObject,'Value'));
+setSamplingDelayGUI(handles,roundedValue);
+
+% Update slider value and text on GUI
+function setSamplingDelayGUI(handles,samplingDelay)
+    set(handles.sliderSamplingDelay,'Value',samplingDelay);
+    str = sprintf('%u milliseconds',samplingDelay);
+    set(handles.textSamplingDelay,'String',str);
+
+% --- Executes during object creation, after setting all properties.
+function sliderSamplingDelay_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to sliderSamplingDelay (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+if isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor',[.9 .9 .9]);
+end
+
+min = 0;
+max = 100;
+
+set(hObject, 'SliderStep', [1,10]/(max - min)); % Step size when click on arrow and when on background (percent change)
+set(hObject, 'Min', min);
+set(hObject, 'Max', max);
+set(hObject, 'Value', 25);
+
+
+% --- Executes on button press in buttonStartSerial.
+function buttonStartSerial_Callback(hObject, eventdata, handles)
+% hObject    handle to buttonStartSerial (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+global s;
+
+COM = 'COM3';
+baudRate = 28800;
+
+if(get(hObject,'Value') == 1)
+    % Open serial connection to Arduino
+    try
+        s = openSerialConnection(handles,COM,baudRate);
+        set(handles.textStatus,'String','Connected to Arduino!');
+    catch exception
+        set(handles.textStatus,'String','Check connection with Arduino!');
+        set(hObject,'Value',0); % Unset button
+        throw(exception);
+    end
+elseif(get(handles.buttonStart,'Value') == 1)
+    set(handles.textStatus,'String','First stop sampling!');
+    set(hObject,'Value',1); % Reset button
+else
+    closeSerialConnection(s);
+    set(handles.textStatus,'String','Disconnected from Arduino!');
+end
+
+% --- Executes on button press in buttonStart.
+function buttonStart_Callback(hObject, eventdata, handles)
+% hObject    handle to buttonStart (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+global haltExecution;
+global s;
+try
+    if(strcmp(get(s,'Status'),'open'))
+        if(get(hObject,'Value') == 1)          
+            % Empty serial buffer
+            flushSerialBuffer(handles);
+                     
+            if(haltExecution == 2)
+                sendSamplingDelay(handles);
+            end
+            
+            haltExecution = 0;
+            
+            if(get(handles.radioRealTime,'Value') == 1)
+                realtime_plot(handles);
+            elseif(get(handles.radioSamples,'Value') == 1)
+                numberSamples = str2double(get(handles.editSamples,'String'));
+                if(numberSamples > 0)
+                    fNIRS(numberSamples, [], 0);
+                end
+            elseif(get(handles.radioTasks,'Value'))
+                amountTasks = str2double(get(handles.editIndex,'String')) - 1
+                tasks = get(handles.arrayTasks,'Data')
+                if(amountTasks > 0)
+                    fNIRS(0, tasks, amountTasks);
+                end
+            else
+                set(handles.textStatus,'String','Select a mode!');
+                set(hObject,'Value',0); % Unset button
+            end
+        else
+            haltExecution = 1;
+        end
+    else
+        set(handles.textStatus,'String','First connect to Arduino!');
+        set(hObject,'Value',0); % Unset button
+    end
+catch exception
+    set(handles.textStatus,'String','First connect to Arduino!');
+    set(hObject,'Value',0); % Unset button
+    throw(exception);
+end
+
+% Empty serial buffer
+function flushSerialBuffer(handles)
+    global s;
+
+    while(get(s,'BytesAvailable') ~= 0)
+        fscanf(s);
+    end
+    fprintf(s,'f\n');
+
+    set(handles.textStatus,'String','Serial buffer flushed!');
+    
+% Send samplingDelay to Arduino
+function sendSamplingDelay(handles)
+    global s;
+    
+    newDelay = get(handles.sliderSamplingDelay,'Value');
+    setSamplingDelayGUI(handles,newDelay);
+    updateDelayStr = sprintf('d%u\n',newDelay);
+    fprintf(s,updateDelayStr);
+	set(handles.textStatus,'String',fscanf(s,'%c'));
