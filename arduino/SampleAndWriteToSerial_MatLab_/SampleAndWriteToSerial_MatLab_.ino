@@ -104,8 +104,9 @@ void loop() {
   if (Serial.available() > 0) {
     // Wait for signal from Matlab that serial data buffer is empty to prevent wrong interpreted data
     int incomingByte = Serial.read();
-
-    if(flushed == 1) { // Check if matlab is ready
+    if(incomingByte == 99) { // ADC configuration command ('c' followed by byte to set configuration registor of ADS1100)
+      configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
+    } else if(flushed == 1) { // Check if matlab is ready (serial buffer empty)
       switch(incomingByte) {
         case 100: // Sampling delay command ('d')
           newDelay = Serial.parseInt();
@@ -156,7 +157,7 @@ void loop() {
       }
 
       Wire.beginTransmission(AD0);
-      Wire.write(configRegister);              // Set bit 7 -> start single conversion
+      Wire.write(configRegister);     // Set bit 7 -> start single conversion
       Wire.endTransmission();        // Write qeued byte;
 
       adcBusy = 1;
