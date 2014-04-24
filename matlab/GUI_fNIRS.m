@@ -29,7 +29,7 @@ function varargout = GUI_fNIRS(varargin)
 
 % Edit the above text to modify the response to help GUI_fNIRS
 
-% Last Modified by GUIDE v2.5 21-Apr-2014 22:55:37
+% Last Modified by GUIDE v2.5 24-Apr-2014 20:57:20
 
 
 % Begin initialization code - DO NOT EDIT
@@ -52,6 +52,7 @@ else
 end
 % End initialization code - DO NOT EDIT
 
+
 % --- Executes just before GUI_fNIRS is made visible.
 function GUI_fNIRS_OpeningFcn(hObject, eventdata, handles, varargin)
 % This function has no output args, see OutputFcn.
@@ -69,8 +70,9 @@ guidata(hObject, handles);
 % UIWAIT makes GUI_fNIRS wait for user response (see UIRESUME)
 % uiwait(handles.figure1);
 
-closeAllSerialConnections();
-   
+% Run custom initialization
+initialization(hObject, handles);
+
 % --- Outputs from this function are returned to the command line.
 function varargout = GUI_fNIRS_OutputFcn(~, eventdata, handles) 
 % varargout  cell array for returning output args (see VARARGOUT);
@@ -81,9 +83,30 @@ function varargout = GUI_fNIRS_OutputFcn(~, eventdata, handles)
 % Get default command line output from handles structure
 varargout{1} = handles.output;
 
-function s = openSerialConnection(handles,com,baud)
-    global configADC;
-    
+
+
+
+% -------------------------------------------------------------------------
+%                               FUNCTIONS
+% -------------------------------------------------------------------------
+
+% Custom initialization
+function initialization(hObject, handles)
+        % Close any open serial connections
+        closeAllSerialConnections();
+        
+        % Add shared parameters to GUIDATA
+        handles.serialConnection = 0;
+        handles.configADC = 0;
+        handles.haltExecution = 1;
+        handles.trainingData = [];
+    	handles.trainingIndex = 0;
+        handles.networkCreated = 0;
+        
+        % Store the new GUIDATA structure
+        guidata(hObject,handles)
+
+function s = openSerialConnection(handles,com,baud)  
     s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
     set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
 
@@ -96,16 +119,28 @@ function s = openSerialConnection(handles,com,baud)
     set(handles.textADCConfiguration,'String',dec2bin(configADC,8)); % Receive ADC configuration register setting
     setSamplingDelayGUI(handles,samplingDelay);
     
+    % Update shared variable
+    handles.configADC = configADC;
+    handles.serialConnection = s;
+    guidata(gcbo,handles);
+    
 function closeSerialConnection(s)
-    if(strcmp(get(s,'Status'),'open') == 1)
-        fprintf(s,'e\n');
-        fclose(s);
+    if(s ~= 0)
+        try
+            fprintf(s,'e\n');
+            fclose(s);
+
+            % Update shared variable
+            handles = guidata(gcbo);
+            handles.serialConnection = 0;
+            guidata(gcbo,handles);
+        catch exception
+            throw(exception)
+        end
     end
     
 % Realtime plot
  function realtime_plot(handles)
-    clearvars n FS x y1 y2 y3 y4 sampledData trainingData trainingIndex networkCreated;
-
     n = 1;
     x = 0;
     y1 = 0;
@@ -117,16 +152,17 @@ function closeSerialConnection(s)
     frameSize = 100; % Amount of samples to use for FFT
     frame = zeros(frameSize,3);
     
-    global trainingData;
-    global trainingIndex;
-    global networkCreated;
-    global haltExecution;
-    global s;
+    trainingData = handles.trainingData;
+    trainingIndex = handles.trainingIndex;
+    networkCreated = handles.networkCreated;
+    s = handles.serialConnection;
     
-    trainingIndex = 1;
-    networkCreated = 0;
-    haltExecution = 0;
-     
+    % Update shared variables
+    handles.haltExecution = 0;
+    handles.trainingIndex = 1;
+    handles.networkCreated = 0;
+    guidata(gcbo,handles);
+    
     % Setup FFT axes
     set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
     handles.plotFFTHandle = plot(x,y1,x,y2,x,y3,'LineWidth',2);
@@ -150,7 +186,7 @@ function closeSerialConnection(s)
         set(handles.textStatus,'String',fscanf(s,'%c')); % Receive return message (confirmation) (%c = all chars, including whitespace)
 
         %        while(get(handles.radioRealTime,'Value') == 1)
-        while(haltExecution == 0)
+        while(getExecutionState() == 0)
            % Read input as CSV, ignoring the commas (unsigned int = %u, text = %*c).
             sampledData(1,1:4) = fscanf(s,'%u%*c');
         
@@ -224,10 +260,10 @@ function closeSerialConnection(s)
         end
         fprintf(s,'e/n'); % Stop sampling
         
-        cla(handles.axesRealTime);
-        cla(handles.axesFFT);
+                % cla(handles.axesRealTime);
+                % cla(handles.axesFFT);
         stopSamplingGUIUpdate(handles);
-        if(haltExecution == -1) % GUI close request function has run
+        if(getExecutionState() == -1) % GUI close request function has run
             closeSerialConnection(s);
             delete(gcf);
         end
@@ -267,8 +303,50 @@ function stopSamplingGUIUpdate(handles)
 % Makes radio buttons mutually exclusive
 function mutual_exclude(off)
 	set(off,'Value',0);
-    
 
+% Update slider value and text on GUI
+function setSamplingDelayGUI(handles,samplingDelay)
+    set(handles.sliderSamplingDelay,'Value',samplingDelay);
+    str = sprintf('%u milliseconds',samplingDelay);
+    set(handles.textSamplingDelay,'String',str);
+
+% Get current execution state value from GUIDATA
+function int = getExecutionState()
+    try
+        handles = guidata(gcbo);
+        int = handles.haltExecution;
+    catch % if figure was closed, before this function was executed the reference to haltExecution will be lost.
+        int = 1;
+    end
+    
+% Empty serial buffer
+function flushSerialBuffer(handles)
+    s = handles.serialConnection;
+
+    while(get(s,'BytesAvailable') ~= 0)
+        fscanf(s);
+    end
+    fprintf(s,'f\n');
+
+    set(handles.textStatus,'String','Serial buffer flushed!');
+    
+% Send samplingDelay to Arduino
+function sendSamplingDelay(handles)
+    s = handles.serialConnection;
+    
+    newDelay = get(handles.sliderSamplingDelay,'Value');
+    setSamplingDelayGUI(handles,newDelay);
+    updateDelayStr = sprintf('d%u\n',newDelay);
+    fprintf(s,updateDelayStr);
+	set(handles.textStatus,'String',fscanf(s,'%c'));
+
+
+
+
+% -------------------------------------------------------------------------
+%                         CALLBACK FUNCTIONS
+% -------------------------------------------------------------------------
+    
 % --- Executes on button press in radioRealTime.
 function radioRealTime_Callback(hObject, eventdata, handles)
 % hObject    handle to radioRealTime (see GCBO)
@@ -333,32 +411,6 @@ mutual_exclude(off);
 % set(handles.titleADCGain,'Visible','off');
 % set(handles.menuADCGain,'Visible','off');
 
-% --- Executes during object creation, after setting all properties.
-function listTasks_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to listTasks (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: listbox controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
-
-
-% --- Executes during object creation, after setting all properties.
-function editSamples_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to editSamples (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: edit controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
-
-
 % --- Executes on button press in buttonAddTask.
 function buttonAddTask_Callback(hObject, eventdata, handles)
 % hObject    handle to buttonAddTask (see GCBO)
@@ -381,35 +433,7 @@ function buttonAddTask_Callback(hObject, eventdata, handles)
 
         set(handles.editIndex,'String',num2str(index + 1));
     end
-    
-
-% --- Executes during object creation, after setting all properties.
-function editTaskDuration_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to editTaskDuration (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: edit controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
-
-
-% --- Executes during object creation, after setting all properties.
-function editIndex_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to editIndex (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: edit controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
-set(hObject,'String','1');
-
-
+ 
 % --- Executes on selection change in listTasks.
 function listTasks_Callback(hObject, eventdata, handles)
 % hObject    handle to listTasks (see GCBO)
@@ -419,21 +443,10 @@ function listTasks_Callback(hObject, eventdata, handles)
 % Hints: contents = cellstr(get(hObject,'String')) returns listTasks contents as cell array
 %        contents{get(hObject,'Value')} returns selected item from listTasks
 
-
-
 function editTaskDuration_Callback(hObject, eventdata, handles)
 % hObject    handle to editTaskDuration (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-    
-% --- Executes during object creation, after setting all properties.
-function axesRealTime_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to axesRealTime (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: place code in OpeningFcn to populate axesRealTime
-
 
 % --- Executes on button press in buttonTrainRest.
 function buttonTrainRest_Callback(hObject, eventdata, handles)
@@ -458,20 +471,6 @@ function menuTrainState_Callback(hObject, eventdata, handles)
 
 % Hints: contents = cellstr(get(hObject,'String')) returns menuTrainState contents as cell array
 %        contents{get(hObject,'Value')} returns selected item from menuTrainState
-
-
-% --- Executes during object creation, after setting all properties.
-function menuTrainState_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to menuTrainState (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: popupmenu controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
-
 
 % --- Executes on button press in toggleTraining.
 function toggleTraining_Callback(hObject, eventdata, handles)
@@ -505,45 +504,19 @@ function toggleNetwork_Callback(hObject, eventdata, handles)
 
 % Hint: get(hObject,'Value') returns toggle state of toggleNetwork
 
-global trainingData;
-global trainingIndex;
-global networkCreated;
-
 if(get(hObject,'Value') == 0)
     set(hObject,'String','Create network');
-    networkCreated = 0;
-    clearvars trainingData trainingIndex;
+    % Update shared variable
+    handles.trainingData = [];
+    handles.trainingIndex = 1;
+    handles.networkCreated = 0;
+    guidata(gcbo,handles);
 else
-    networkCreated = 0;
     set(hObject,'String','Reset training');
-    networkCreated = 1;
+    % Update shared variable
+    handles.networkCreated = 1;
+    guidata(gcbo,handles);
 end
-
-
-
-% --- Executes when user attempts to close figure1.
-function figure1_CloseRequestFcn(hObject, eventdata, handles)
-% hObject    handle to figure1 (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Display a question dialog box
-   global haltExecution;
-   selection = questdlg('Close this program?',...
-      'Close Request Function',...
-      'Yes','No','Yes'); 
-   switch selection, 
-      case 'Yes',
-         if(haltExecution == 0)
-             % Give running functions time to exit cleanly.
-             haltExecution = -1;
-         else
-            delete(gcf);
-         end
-      case 'No'
-      return 
-   end
-
 
 % --- Executes on selection change in menuADCGain.
 function menuADCGain_Callback(hObject, eventdata, handles)
@@ -554,8 +527,9 @@ function menuADCGain_Callback(hObject, eventdata, handles)
 % Hints: contents = cellstr(get(hObject,'String')) returns menuADCGain contents as cell array
 %        contents{get(hObject,'Value')} returns selected item from menuADCGain
 
-global configADC;
-global s;
+% Get shared variables
+configADC = handles.configADC;
+s = handles.serialConnection;
 
 gainSetting = get(hObject,'Value');
 
@@ -572,23 +546,15 @@ switch gainSetting
     case 4 % Gain 8 - 11
         configADC = bitset(configADC,1,1);
         configADC = bitset(configADC,2,1);
-end;
+end
 
 set(handles.textADCConfiguration,'String',dec2bin(configADC,8));
 updateGainStr = sprintf('c%u\n',configADC);
 fprintf(s,updateGainStr);
 
-% --- Executes during object creation, after setting all properties.
-function menuADCGain_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to menuADCGain (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: popupmenu controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
+% Update shared variable
+handles.configADC = configADC;
+guidata(gcbo,handles);
 
 % --- Executes on slider movement.
 function sliderSamplingDelay_Callback(hObject, eventdata, handles)
@@ -596,37 +562,12 @@ function sliderSamplingDelay_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 
-global haltExecution;
-
-haltExecution = 2; % Sampling delay is updated on next run
+% Update shared variable
+handles.haltExecution = 2; % Sampling delay is updated on next run
+guidata(gcbo,handles)
 
 roundedValue = round(get(hObject,'Value'));
 setSamplingDelayGUI(handles,roundedValue);
-
-% Update slider value and text on GUI
-function setSamplingDelayGUI(handles,samplingDelay)
-    set(handles.sliderSamplingDelay,'Value',samplingDelay);
-    str = sprintf('%u milliseconds',samplingDelay);
-    set(handles.textSamplingDelay,'String',str);
-
-% --- Executes during object creation, after setting all properties.
-function sliderSamplingDelay_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to sliderSamplingDelay (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-if isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor',[.9 .9 .9]);
-end
-
-min = 0;
-max = 100;
-
-set(hObject, 'SliderStep', [1,10]/(max - min)); % Step size when click on arrow and when on background (percent change)
-set(hObject, 'Min', min);
-set(hObject, 'Max', max);
-set(hObject, 'Value', 25);
-
 
 % --- Executes on button press in buttonStartSerial.
 function buttonStartSerial_Callback(hObject, eventdata, handles)
@@ -634,7 +575,7 @@ function buttonStartSerial_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 
-global s;
+s = handles.serialConnection;
 
 COM = 'COM3';
 baudRate = 28800;
@@ -642,7 +583,7 @@ baudRate = 28800;
 if(get(hObject,'Value') == 1)
     % Open serial connection to Arduino
     try
-        s = openSerialConnection(handles,COM,baudRate);
+        openSerialConnection(handles,COM,baudRate);
         set(handles.textStatus,'String','Connected to Arduino!');
     catch exception
         set(handles.textStatus,'String','Check connection with Arduino!');
@@ -663,39 +604,53 @@ function buttonStart_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 
-global haltExecution;
-global s;
+s = handles.serialConnection;
+
 try
     if(strcmp(get(s,'Status'),'open'))
-        if(get(hObject,'Value') == 1)          
-            % Empty serial buffer
-            flushSerialBuffer(handles);
-                     
-            if(haltExecution == 2)
-                sendSamplingDelay(handles);
-            end
-            
-            haltExecution = 0;
-            
-            if(get(handles.radioRealTime,'Value') == 1)
-                realtime_plot(handles);
-            elseif(get(handles.radioSamples,'Value') == 1)
-                numberSamples = str2double(get(handles.editSamples,'String'));
-                if(numberSamples > 0)
-                    fNIRS(numberSamples, [], 0);
+        if(get(hObject,'Value') == 1)
+            % Confirm start of capture
+            selection = questdlg('Overwrite previous measurement?',...
+              'Start new data capture',...
+              'Yes','No','Yes'); 
+            switch selection 
+              case 'Yes' % Continue
+                % Empty serial buffer
+                flushSerialBuffer(handles);
+
+                if(getExecutionState() == 2)
+                    sendSamplingDelay(handles);
                 end
-            elseif(get(handles.radioTasks,'Value'))
-                amountTasks = str2double(get(handles.editIndex,'String')) - 1
-                tasks = get(handles.arrayTasks,'Data')
-                if(amountTasks > 0)
-                    fNIRS(0, tasks, amountTasks);
+
+                % Update shared variable
+                handles.haltExecution = 0;
+                guidata(gcbo,handles)
+
+                if(get(handles.radioRealTime,'Value') == 1)
+                    realtime_plot(handles);
+                elseif(get(handles.radioSamples,'Value') == 1)
+                    numberSamples = str2double(get(handles.editSamples,'String'));
+                    if(numberSamples > 0)
+                        fNIRS(numberSamples, [], 0);
+                    end
+                elseif(get(handles.radioTasks,'Value'))
+                    amountTasks = str2double(get(handles.editIndex,'String')) - 1
+                    tasks = get(handles.arrayTasks,'Data')
+                    if(amountTasks > 0)
+                        fNIRS(0, tasks, amountTasks);
+                    end
+                else
+                    set(handles.textStatus,'String','Select a mode!');
+                    set(hObject,'Value',0); % Unset button
                 end
-            else
-                set(handles.textStatus,'String','Select a mode!');
+              case 'No' % Abort
                 set(hObject,'Value',0); % Unset button
+                return;
             end
         else
-            haltExecution = 1;
+             % Update shared variable
+             handles.haltExecution = 1;
+             guidata(gcbo,handles);
         end
     else
         set(handles.textStatus,'String','First connect to Arduino!');
@@ -704,26 +659,192 @@ try
 catch exception
     set(handles.textStatus,'String','First connect to Arduino!');
     set(hObject,'Value',0); % Unset button
-    throw(exception);
+    %throw(exception)
 end
 
-% Empty serial buffer
-function flushSerialBuffer(handles)
-    global s;
 
-    while(get(s,'BytesAvailable') ~= 0)
-        fscanf(s);
-    end
-    fprintf(s,'f\n');
 
-    set(handles.textStatus,'String','Serial buffer flushed!');
-    
-% Send samplingDelay to Arduino
-function sendSamplingDelay(handles)
-    global s;
-    
-    newDelay = get(handles.sliderSamplingDelay,'Value');
-    setSamplingDelayGUI(handles,newDelay);
-    updateDelayStr = sprintf('d%u\n',newDelay);
-    fprintf(s,updateDelayStr);
-	set(handles.textStatus,'String',fscanf(s,'%c'));
+
+% -------------------------------------------------------------------------
+%                           CREATE FUNCTIONS
+% -------------------------------------------------------------------------
+
+% --- Executes during object creation, after setting all properties.
+function listTasks_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to listTasks (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: listbox controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% --- Executes during object creation, after setting all properties.
+function editSamples_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to editSamples (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+set(hObject,'String','1000');
+
+% --- Executes during object creation, after setting all properties.
+function editTaskDuration_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to editTaskDuration (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+set(hObject,'String','Task duration (seconds)');
+
+% --- Executes during object creation, after setting all properties.
+function editIndex_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to editIndex (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+set(hObject,'String','1');
+
+% --- Executes during object creation, after setting all properties.
+function axesRealTime_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to axesRealTime (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: place code in OpeningFcn to populate axesRealTime
+cla(hObject);
+
+% --- Executes during object creation, after setting all properties.
+function menuTrainState_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to menuTrainState (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% --- Executes during object creation, after setting all properties.
+function menuADCGain_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to menuADCGain (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+set(hObject,'Value',1);
+
+% --- Executes during object creation, after setting all properties.
+function sliderSamplingDelay_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to sliderSamplingDelay (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+if isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor',[.9 .9 .9]);
+end
+
+min = 0;
+max = 100;
+
+set(hObject, 'SliderStep', [1,10]/(max - min)); % Step size when click on arrow and when on background (percent change)
+set(hObject, 'Min', min);
+set(hObject, 'Max', max);
+set(hObject, 'Value', 25);
+
+% --- Executes during object creation, after setting all properties.
+function buttonStart_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to buttonStart (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+set(hObject,'Value',0);
+
+% --- Executes during object creation, after setting all properties.
+function textStatus_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to textStatus (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+set(hObject,'String','');
+
+% --- Executes during object creation, after setting all properties.
+function textSamplingSpeed_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to textSamplingSpeed (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+set(hObject,'String','');
+
+% --- Executes during object creation, after setting all properties.
+function textADCConfiguration_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to textADCConfiguration (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+set(hObject,'String','');
+
+% --- Executes during object creation, after setting all properties.
+function buttonStartSerial_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to buttonStartSerial (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+set(hObject,'Value',0);
+
+% --- Executes during object creation, after setting all properties.
+function axesFFT_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to axesFFT (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+cla(hObject);
+
+
+
+
+% -------------------------------------------------------------------------
+%                           CLOSE REQUEST FUNCTIONS
+% -------------------------------------------------------------------------
+
+% --- Executes when user attempts to close figure1.
+function figure1_CloseRequestFcn(hObject, eventdata, handles)
+% hObject    handle to figure1 (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% handles % Display GUIDATA content for debugging
+
+% Display a question dialog box
+   selection = questdlg('Close this program?',...
+      'Close Request Function',...
+      'Yes','No','Yes'); 
+    switch selection 
+        case 'Yes'
+        if(getExecutionState() == 0)
+         % Give running functions time to exit cleanly.
+         % Update shared variable
+         handles.haltExecution = -1;
+         guidata(gcbo,handles)
+        else
+        delete(gcf);
+        end
+        case 'No'
+        return 
+   end
