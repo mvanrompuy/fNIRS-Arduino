@@ -106,6 +106,7 @@ function initialization(hObject, handles)
         % Store the new GUIDATA structure
         guidata(hObject,handles)
 
+% Open serial connection to Arduino
 function s = openSerialConnection(handles,com,baud)  
     s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
     set(s, 'terminator', 'LF'); % Set terminator to LF (line feed)
@@ -123,7 +124,8 @@ function s = openSerialConnection(handles,com,baud)
     handles.configADC = configADC;
     handles.serialConnection = s;
     guidata(gcbo,handles);
-    
+
+% Close serial connection to Arduino
 function closeSerialConnection(s)
     if(s ~= 0)
         try
@@ -140,7 +142,7 @@ function closeSerialConnection(s)
     end
     
 % Realtime plot
- function realtime_plot(handles)
+function realtime_plot(handles)
     n = 1;
     x = 0;
     y1 = 0;
@@ -252,7 +254,7 @@ function closeSerialConnection(s)
             if(n > frameSize)
                 if(rem(n,refreshTime) == 0) % calculate FFT every "refreshTime" (when enough samples have been gathered)
                     frame(:,1:3) = [y1(n-frameSize+1:n)' y2(n-frameSize+1:n)' y3(n-frameSize+1:n)'];
-                    calculateFFT(frame,1,handles);
+                    calculateFFT(frame,1,FS,handles);
                 end
             end
             
@@ -272,11 +274,10 @@ function closeSerialConnection(s)
         throw(exception);
     end
     
-%
-function calculateFFT(data,window,handles)
+% Calculate FFT
+function calculateFFT(data,window,FS,handles)
 colorMap = hsv(size(data,2)); %Create color for each channel
 L = size(data,1);
-FS = str2double(get(handles.titleSamplingSpeed,'String'));
 
 switch(window)
     case 1
@@ -295,7 +296,7 @@ drawnow;
 % for p = 1:3
 %     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
 % end 
-    
+
 % Update GUI on stop sampling
 function stopSamplingGUIUpdate(handles)
     set(handles.buttonStart,'Value',0);
