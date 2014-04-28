@@ -213,3 +213,10 @@ pip-log.txt
 
 #Mr Developer
 .mr.developer.cfg
+*.edf
+*.mat
+*.txt
+matlab/OBSOLETE/ReceiveDataFromArduino.m
+matlab/OBSOLETE/fNIRS.m
+arduino/OBSOLETE/ADS1100/ADS1100.ino
+eeg/FastICA_25.zip

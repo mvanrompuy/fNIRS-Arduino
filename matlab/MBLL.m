@@ -69,13 +69,13 @@ dataArray = dataArray + 0.5; % Move from [0 1] to [0.5 1.5] to avoid log(0) (und
 %         deltaODArray(i,j) = -log(tNext/tNow); % Calculate and store delta OD
 %     end
 % end
-dataArray
+% dataArray
 for i = 1:size(dataArray,1)-1 % Rows
     for j = 1:size(dataArray,2) % Columns (containing measurements)
         deltaODArray(i,j) = -log(dataArray(i,j)/mean(dataArray(:,j))); % Calculate and store delta OD
     end
 end
-deltaODArray
+% deltaODArray
 
 % Based on https://mail.nmr.mgh.harvard.edu/pipermail//homer-users/2006-July/000124.html
 
@@ -84,7 +84,7 @@ deltaODArray(:,2) = deltaODArray(:,2)/(lp*DPF2);
 
 extInv = inv(extCoef'*extCoef)*extCoef'; %Linear inversion operator
 
-% Sum temporal changes to get time course
+% Sum temporal changes to get time course -> NEEDED OR NOT?
 for j = 1:size(deltaODArray,2) % Columns (containing measurements)
     temp = 0;
     for i = 1:size(deltaODArray,1) % Rows
@@ -94,7 +94,7 @@ for j = 1:size(deltaODArray,2) % Columns (containing measurements)
 end
 
 Hb = extInv*deltaODArray(:,1:2)'; % Find HbO and HbR
-HbT = Hb(1,:) - Hb(2,:);
+HbT = Hb(1,:) + Hb(2,:);
 
 Hb = [Hb',HbT'];
 
