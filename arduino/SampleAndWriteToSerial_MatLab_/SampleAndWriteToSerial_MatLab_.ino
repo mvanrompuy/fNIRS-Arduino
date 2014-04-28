@@ -57,7 +57,7 @@
 unsigned int sensorValue = 0;       // Unsigned 2-byte int
 int configRegister = ADConfig;      // Set initial value
 int confRegisterState;
-int samplesRequested = 0;
+long samplesRequested = 0;
 int n = 0;
 int sendData = 0;
 int adcBusy = 1;
@@ -89,56 +89,58 @@ void setup() {
 // the loop routine runs over and over again forever:
 void loop() {
   String data;
-  int startTime;
-
-  // Update sampling delay
-  if(delayChanged == 1) {
-    samplingDelay = newDelay;
-    delayChanged = 0;
-    Serial.print("Sampling delay set to ");
-    Serial.print(samplingDelay);
-    Serial.println(" milliseconds.");
-  }
-
-  // Check for commands from Matlab
-  if (Serial.available() > 0) {
-    // Wait for signal from Matlab that serial data buffer is empty to prevent wrong interpreted data
-    int incomingByte = Serial.read();
-    if(incomingByte == 99) { // ADC configuration command ('c' followed by byte to set configuration registor of ADS1100)
-      configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
-    } else if(flushed == 1) { // Check if matlab is ready (serial buffer empty)
-      switch(incomingByte) {
-        case 100: // Sampling delay command ('d')
-          newDelay = Serial.parseInt();
-          delayChanged = 1;
-          break;
-        case 110: // Number of samples command ('n')
-          samplesRequested = Serial.parseInt();
-          Serial.print("Arduino will send ");
-          Serial.print(samplesRequested);
-          Serial.println(" samples:");
-          break;
-        case 115: // Start command ('s')
-          sendData = 1;
-          Serial.println("Arduino will send data until it receives the stop command ('e')");
-          break;
-      }
-    // If matlab hasn't yet send flushed acknowledgement, check for it
-    } else if(incomingByte == 102) { // Flush acknowledgement ('f')
-        flushed = 1;
-    } else {
-        // Ignore unknown command
+  unsigned long startTime;
+  while(samplesRequested == 0 && sendData == 0) {
+    // Update sampling delay
+    if(delayChanged == 1) {
+      samplingDelay = newDelay;
+      delayChanged = 0;
+      Serial.print("Sampling delay set to ");
+      Serial.print(samplingDelay);
+      Serial.println(" milliseconds.");
     }
-   }
-
+  
+    // Check for commands from Matlab
+    if (Serial.available() > 0) {
+      // Wait for signal from Matlab that serial data buffer is empty to prevent wrong interpreted data
+      int incomingByte = Serial.read();
+      if(incomingByte == 99) { // ADC configuration command ('c' followed by byte to set configuration registor of ADS1100)
+        configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
+      } else if(flushed == 1) { // Check if matlab is ready (serial buffer empty)
+        switch(incomingByte) {
+          case 100: // Sampling delay command ('d')
+            newDelay = Serial.parseInt();
+            delayChanged = 1;
+            break;
+          case 110: // Number of samples command ('n')
+            samplesRequested = Serial.parseInt();
+            sendData = 1;
+            Serial.print("Arduino will send ");
+            Serial.print(samplesRequested);
+            Serial.println(" samples:");
+            break;
+          case 115: // Start command ('s')
+            sendData = 1;
+            Serial.println("Arduino will send data until it receives the stop command ('e')");
+            break;
+        }
+      // If matlab hasn't yet send flushed acknowledgement, check for it
+      } else if(incomingByte == 102) { // Flush acknowledgement ('f')
+          flushed = 1;
+      } else {
+          // Ignore unknown command
+      }
+     }
+  }
+  
   // Store time at start of sampling
   startTime = millis();
 
   // Execute sampling and send data to Matlab
-  for(int i = 0;i<samplesRequested || sendData == 1;i++){
+  for(unsigned long i = 0;(i<samplesRequested || (samplesRequested == 0 && sendData == 1));i++){    
     data = "";
-    Serial.print(millis() - startTime); // Time since start sampling
-    Serial.print(",");
+    data += millis() - startTime; // Time since start sampling
+    data += ",";
 
     for(int c = 1; c <= 3; c++){
       switch(c){
@@ -183,34 +185,38 @@ void loop() {
       data += sensorValue;
       data += ",";
       delay(samplingDelay);
-      
-      // Check for commands from Matlab
-      if (Serial.available() > 0) {
-        int incomingByte = Serial.read();
-        switch(incomingByte) {
-          case 99: // ADC configuration command ('c' followed by byte to set configuration registor of ADS1100)
-            configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
-            break;
-          case 100: // Delay command ('d')
-            newDelay = Serial.parseInt();
-            delayChanged = 1;
-            sendData = 0;
-            flushed = 0;
-            break;
-          case 101: // Stop command ('e')
-            sendData = 0;
-            flushed = 0;
-            break;
-        }
+    }
+    // Check for commands from Matlab
+    if (Serial.available() > 0) {
+      int incomingByte = Serial.read();
+      switch(incomingByte) {
+        case 99: // ADC configuration command ('c' followed by byte to set configuration registor of ADS1100)
+          configRegister = Serial.parseInt();  // Read configuration byte and update configuration register
+          break;
+        case 100: // Delay command ('d')
+          newDelay = Serial.parseInt();
+          delayChanged = 1;
+          sendData = 0;
+          flushed = 0;
+          break;
+        case 101: // Stop command ('e')
+          sendData = 0;
+          samplesRequested = 0;
+          flushed = 0;
+          break;
       }
     }
-    Serial.println(data);
+    if(sendData == 1){
+      Serial.println(data);
+    }
   }
   samplesRequested = 0;
   sendData = 0;
   data = "";
   digitalWrite(2,0);
   digitalWrite(3,0);
+  
+  Serial.println("Sampling has stopped.");
 }
 
 // When using internal ADC of Arduino UNO
