@@ -29,7 +29,7 @@ function varargout = GUI_fNIRS(varargin)
 
 % Edit the above text to modify the response to help GUI_fNIRS
 
-% Last Modified by GUIDE v2.5 26-Apr-2014 01:15:13
+% Last Modified by GUIDE v2.5 29-Apr-2014 15:13:02
 
 
 % Begin initialization code - DO NOT EDIT
@@ -92,22 +92,57 @@ varargout{1} = handles.output;
 
 % Custom initialization
 function initialization(hObject, handles)
-        % Close any open serial connections
-        closeAllSerialConnections();
-        
-        % Add shared parameters to GUIDATA
-        handles.serialConnection = 0;
-        handles.configADC = 0;
-        handles.haltExecution = 1;
-        handles.fNIRS = fNIRSData(0,0,[],[]); % Variable of fNIRSData class
-        handles.updateArduino = 0;
-        handles.trainingData = [];
-    	handles.trainingIndex = 0;
-        handles.networkCreated = 0;
-        
-        % Store the new GUIDATA structure
-        guidata(hObject,handles)
+    % Close any open serial connections
+    closeAllSerialConnections();
 
+    % Add shared parameters to GUIDATA
+        % Configuration
+        handles.channels = 3; % Backround, wavelength 1, wavelength 2
+        handles.wavelengths = [765,850]; % nm
+
+    handles.serialConnection = 0;
+    handles.configADC = 0;
+    handles.haltExecution = 1;
+    handles.fNIRS = fNIRSData(handles.channels,handles.wavelengths,[],[]); % Variable of fNIRSData class
+    handles.updateArduino = 0;
+    handles.trainingData = [];
+    handles.trainingIndex = 0;
+    handles.networkCreated = 0;
+    handles.plotHandle = 0;
+    handles.plotFFTHandle = 0;
+    % Update handles structure
+    guidata(handles.output, handles);
+        
+function handles = setupPlot(handles,numberOfSeries,channels,xLabel,yLabel,titleText)
+    % Clear FFT axes
+    cla(handles.axesRealTime);  
+    
+    % Setup plot axes
+    set(handles.output,'CurrentAxes',handles.axesRealTime);
+    handles.plotHandle = plot(1,ones(1,numberOfSeries*(channels)),'LineWidth',1);
+
+    xlabel(handles.axesRealTime,xLabel); % Create xlabel
+    ylabel(handles.axesRealTime,yLabel); % Create ylabel
+    title(handles.axesRealTime,titleText); % Create title
+    
+    % Update handles structure
+    guidata(handles.output, handles);
+
+function handles = setupFFT(handles,numberOfSeries,channels,xLabel,yLabel,titleText)
+    % Clear FFT axes
+    cla(handles.axesFFT);
+    
+    % Setup FFT axes
+    set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
+    handles.plotFFTHandle = plot(1,ones(1,numberOfSeries*(channels)),'LineWidth',1);
+
+    xlabel(handles.axesFFT,xLabel); % Create xlabel
+    ylabel(handles.axesFFT,yLabel); % Create ylabel
+    title(handles.axesFFT,titleText); % Create title
+        
+    % Update handles structure
+    guidata(handles.output, handles);
+    
 % Open serial connection to Arduino
 function s = openSerialConnection(handles,com,baud)  
     s = serial(com, 'BaudRate', baud); % Select COM port and set baud rate to 115200
@@ -154,9 +189,12 @@ function sample = readSampleFromSerial(serial)
 % "samples" and "tasks" are meant for accurate measurement and thus can't
 % have any intermittent gain changes.
 function sample(samplingTypeString, handles)
+    % Update GUI
+    startSamplingGUIUpdate(handles)
+
     n = 1;
     x = 0;
-    y1 = 0; y2 = 0; y3 = 0; y4 = 0; % Channels and training output    
+    y1 = 0; y2 = 0; y3 = 0; y4 = 0; % Channels and task output    
     
 %     cla(handles.axesRealTime);
 %     cla(handles.axesFFT);
@@ -171,31 +209,19 @@ function sample(samplingTypeString, handles)
     handles.trainingIndex = 1;
     handles.networkCreated = 0;
     guidata(gcbo,handles);
-    
-    % SETUP OUTPUT AXES
-    
-    % Setup FFT axes
-    set(handles.output,'CurrentAxes',handles.axesFFT); % Set as current output axes
-    handles.plotFFTHandle = plot(x,y1,x,y2,x,y3,'LineWidth',2);
-    guidata(handles.output, handles); % Update handles structure
-
-    xlabel('Frequency (Hz)'); % Create xlabel  
-    ylabel('Amplitude'); % Create ylabel
-    title('Realtime FFT'); % Create title
-
-    % Setup plot axes
-    set(handles.output,'CurrentAxes',handles.axesRealTime);
-    handles.plotHandle = plot(x,y1,x,y2,x,y3,x,y4,'LineWidth',2);
-    guidata(handles.output, handles); % Update handles structure
-
-    xlabel('Time (s)'); % Create xlabel
-    ylabel('Amplitude'); % Create ylabel
-    title('Realtime data'); % Create title 
      
+    % Setup FFT plot
+    handles = setupFFT(handles,1,3,'Frequency (Hz)','Amplitude (dB)','FFT');
+    
+    % Update handles structure
+    guidata(handles.output, handles);
     i = 1;
-% try
+%  try
     switch samplingTypeString
         case 'continuous'
+            % Setup plot
+            handles = setupPlot(handles,1,3,'Time (s)','Intensity','Data');
+            
             fprintf(s,'s/n'); % Start sampling
             set(handles.textStatus,'String',fscanf(s,'%c')); % Receive return message (confirmation) (%c = all chars, including whitespace)
 
@@ -206,9 +232,8 @@ function sample(samplingTypeString, handles)
                 y1(n) = sampledData(1,2);
                 y2(n) = sampledData(1,3);
                 y3(n) = sampledData(1,4);
-                y4(n) = 0;
 
-                set(handles.plotHandle,{'YData'},{y1;y2;y3;y4},'Xdata',x);
+                set(handles.plotHandle,{'YData'},{y1;y2;y3},'Xdata',x);
                 drawnow;
                 FS = n/(x(n)-x(1));
                 set(handles.textSamplingSpeed,'String',num2str(FS));
@@ -226,8 +251,11 @@ function sample(samplingTypeString, handles)
                 set(handles.textSamplesCaptured,'String',sprintf('%u', n));
                 n = n + 1; 
             end
-
+            [x'*1000,y1',y2',y3']
         case 'samples'
+            % Setup plot
+            handles = setupPlot(handles,1,3,'Time (s)','Intensity','Data');
+            
             set(handles.menuADCGain,'Enable','off'); % Disable gain change during "sample" and "task" mode
             samples = str2double(get(handles.editSamples,'String'));
             fprintf(s,'n%u\n',samples); % Write number of samples to Arduino.
@@ -244,9 +272,8 @@ function sample(samplingTypeString, handles)
                 y1(n) = sampledData(1,2);
                 y2(n) = sampledData(1,3);
                 y3(n) = sampledData(1,4);
-                y4(n) = 0;
 
-                set(handles.plotHandle,{'YData'},{y1;y2;y3;y4},'Xdata',x);
+                set(handles.plotHandle,{'YData'},{y1;y2;y3},'Xdata',x);
                 drawnow;
                 FS = n/(x(n)-x(1));
                 set(handles.textSamplingSpeed,'String',num2str(FS));
@@ -265,14 +292,16 @@ function sample(samplingTypeString, handles)
                 n = n + 1;
             end
         case 'tasks'
+            % Setup plot
+            handles = setupPlot(handles,1,4,'Time (s)','Intensity','Data'); % 3 data channels + task channel
+            
             set(handles.menuADCGain,'Enable','off'); % Disable gain change during "sample" and "task" mode
 
+            amountTasks = str2double(get(handles.editIndex,'String')) - 1;
+            taskArray = get(handles.arrayTasks,'Data');
+            
             currTask = taskArray(1,1);
             timeNextTask = taskArray(1,2);
-
-            samples = 10000; % Initial size
-            sampledData = zeros(samples,channels+1); % Initialize array (column for each channel + time column (Arduino))
-            sampledTask = zeros(samples,1);
 
             fprintf(s,'s\n'); % Write start command to Arduino.
             set(handles.textStatus,'String',fscanf(s,'%c')); % Receive return message (confirmation) (%c = all chars, including whitespace)
@@ -285,22 +314,21 @@ function sample(samplingTypeString, handles)
                 
                 sampledData(1,1:4) = readSampleFromSerial(s);
                 
-                sampledTask(n,1) = currTask;
-                    %Store current task and signal user of task switch
-                    if(floor(sampledData(n,1)/(timeNextTask*1000)) >= 1)
-                        beep();     % Signal task switch (beep sound)
-                        i = i + 1;
-                        if(i <= amountTasks)
-                            currTask = taskArray(i,1);
-                            timeNextTask = timeNextTask + taskArray(i,2);
-                        end
-                    end
-
                 x(n) = sampledData(1,1)/1000; % ms to s
                 y1(n) = sampledData(1,2);
                 y2(n) = sampledData(1,3);
                 y3(n) = sampledData(1,4);
-                y4(n) = 0;
+                y4(n) = currTask;
+                
+                %Store current task and signal user of task switch
+                if(floor(x(n)/(timeNextTask)) >= 1)
+                    beep();     % Signal task switch (beep sound)
+                    i = i + 1;
+                    if(i <= amountTasks)
+                        currTask = taskArray(i,1);
+                        timeNextTask = timeNextTask + taskArray(i,2);
+                    end
+                end
 
                 set(handles.plotHandle,{'YData'},{y1;y2;y3;y4},'Xdata',x);
                 drawnow;
@@ -321,11 +349,6 @@ function sample(samplingTypeString, handles)
                 n = n + 1;
             end
             beep();beep();          % Signal end (double beep sound)
-
-            % Update to real number of samples
-            samples = n - 1;
-            sampledData = sampledData(1:n-1,1:4);
-            sampledTask = sampledTask(1:n-1,1);
     end
     
     fprintf(s,'e\n'); % Stop sampling
@@ -355,10 +378,10 @@ function sample(samplingTypeString, handles)
                 % cla(handles.axesRealTime);
                 % cla(handles.axesFFT);
     stopSamplingGUIUpdate(handles);
-% catch exception % In case of error, always close connection first.
-%     closeSerialConnection(s);
-%     throw(exception);
-% end
+%  catch exception % In case of error, always close connection first.
+%      closeSerialConnection(s);
+%      throw(exception);
+%  end
     
 % % Realtime plot
 % function realtime_plot(handles)
@@ -451,7 +474,7 @@ function sample(samplingTypeString, handles)
     
 % Calculate FFT
 function calculateFFT(data,window,FS,handles)
-colorMap = hsv(size(data,2)); %Create color for each channel
+colorMap = hsv(handles.channels); %Create color for each channel
 L = size(data,1);
 
 switch(window)
@@ -464,6 +487,8 @@ end
 data(:,1:3) = bsxfun(@times,data,W); % Apply window
 X(:,1:3) = fft(data(:,1:3));         % Calculate FFT
 
+handles = setupFFT(handles,1,handles.channels,'Frequency (Hz)','Amplitude (dB)','FFT');
+
 set(handles.output,'CurrentAxes',handles.axesFFT); % Set axesFFT as plot output
 X = 20*log10(abs(X([1:L/2],1:3)));
 set(handles.plotFFTHandle,{'YData'},{X(:,1);X(:,2);X(:,3)},'XData',[0:L/2-1]/L*FS);
@@ -472,20 +497,51 @@ drawnow;
 %     plot([0:L/2-1]/L*FS,20*log10(abs(X([1:L/2],p))),'color',colorMap(p,:)) % Plot all channels in different colors
 % end 
 
+% Update GUI on start sampling
+function dataLoadedGUIUpdate(handles)
+    % Update status of controls
+    off = [handles.radioRealTime;handles.radioSamples;handles.radioTasks];
+    mutual_exclude(off);
+    set(handles.panelTasks,'Visible','off');
+    set(handles.buttonStart,'String','Start');
+    set(handles.buttonStartSerial,'String','Connect to Arduino');
+    set(handles.buttonProcess,'Enable','off');
+    set(handles.buttonProcess,'String','Process data');
+    set(handles.buttonClassify,'Enable','off');
+    set(handles.buttonClassify,'String','Classify data');
+    set(handles.listPlotOutput,'Enable','off');
+    set(handles.listChannelOutput,'Enable','off');
+   
+    % Update GUIDATA
+    guidata(gcbo,handles);
+
+% Update GUI on start sampling
+function startSamplingGUIUpdate(handles)
+    % Update status of controls
+    set(handles.panelTasks,'Visible','off');
+    set(handles.buttonStart,'String','Stop');
+    set(handles.sliderSamplingDelay,'Enable','off');
+    set(handles.listPlotOutput,'Enable','off');
+    set(handles.listChannelOutput,'Enable','off');
+   
+    % Update GUIDATA
+    guidata(gcbo,handles);
+
 % Update GUI on stop sampling
 function stopSamplingGUIUpdate(handles)
+    % Update status of controls
     set(handles.menuADCGain,'Enable','on'); % Disabled during "sample" and "task" mode
     set(handles.buttonStart,'Enable','on');
     set(handles.buttonStart,'String','Start');
     set(handles.buttonStart,'Value',0);
+    set(handles.sliderSamplingDelay,'Enable','on');
+    set(handles.listPlotOutput,'Enable','on');
+    set(handles.listChannelOutput,'Enable','on');
     
     resampleRatio = str2double(get(handles.editDecimationFactor,'String'));
     
     % Preprocess (prepare and check data for processing step)
     [processable,handles.fNIRS,msg] = preProcess(handles.fNIRS,resampleRatio);
-    
-    % Update GUIDATA
-    guidata(gcbo,handles);
     
     if(processable == 1)
         set(handles.buttonProcess,'Enable','on');
@@ -493,6 +549,9 @@ function stopSamplingGUIUpdate(handles)
         set(handles.buttonProcess,'Enable','off');
         set(handles.textStatus,'String',msg);
     end
+
+    % Update GUIDATA
+    guidata(gcbo,handles);
     
 % Makes radio buttons mutually exclusive
 function mutual_exclude(off)
@@ -534,6 +593,122 @@ function sendSamplingDelay(handles)
     fprintf(s,updateDelayStr);
 	set(handles.textStatus,'String',fscanf(s,'%c'));
 
+function redrawPlot(handles)
+    yMin = 0;
+    yMax = 0;
+
+    selectedData = get(handles.listPlotOutput,'Value');
+    selectedChannels = get(handles.listChannelOutput,'Value');
+    taskChannelOn = getTasksSet(handles.fNIRS); % Check if tasks are recorded
+    
+    if(~isempty(selectedData) && ~isempty(selectedChannels)) % Check if dataserie(s) and channel(s) are chosen
+        channels = handles.channels; % Amount of channels to show
+        numberOfSeries = length(selectedData); % Amount of dataseries to show
+        colorMap = hsv(6*(channels+1)); % Different fixed color for each dataset and (data and tasks) channel    
+
+        % Store which channels are enabled
+        enabledChannels = zeros(1,channels+1);
+        for c = 1:length(selectedChannels)
+           index = selectedChannels(1,c); % Copy value of selected option
+           enabledChannels(1,index) = 1;
+        end
+
+        % Setup plot handles to amount of channels (+ task lineseries if
+        % available)
+        yLabel = 'Intensity';
+        handles = setupPlot(handles,numberOfSeries,channels+taskChannelOn,'Time (s)',yLabel,'Data');
+        guidata(handles.output, handles); % Update handles structure
+
+        for i = 1:numberOfSeries
+            % Get data
+            value = selectedData(i);
+            switch value
+                case 1 % rawData
+                    [data, time] = getData(handles.fNIRS,'raw');
+                    tasks = getTasks(handles.fNIRS,'raw');
+                case 2 % downsampledDaa
+                    [data, time] = getData(handles.fNIRS,'downsampled');
+                    tasks = getTasks(handles.fNIRS,'downsampled');
+                case 3 % detrendedData
+                    [data, time] = getData(handles.fNIRS,'detrended');
+                    tasks = getTasks(handles.fNIRS,'raw');
+                case 4 % filteredData
+                    [data, time] = getData(handles.fNIRS,'filtered');
+                    tasks = getTasks(handles.fNIRS,'downsampled');
+                case 5 % normalizedData
+                    [data, time] = getData(handles.fNIRS,'normalized');
+                    tasks = getTasks(handles.fNIRS,'downsampled');
+                case 6 % Hb
+                    [data, time] = getData(handles.fNIRS,'Hb');
+                    tasks = getTasks(handles.fNIRS,'downsampled');
+                otherwise
+                    data = 0;
+                    time = 0;
+            end
+
+            if(size(data,2) >= handles.channels) % Check if data is set
+            % Split data
+
+                % Xdata
+                x = time;
+
+                % Ydata
+                if(taskChannelOn == 1)
+                    offset = (channels+1)*(i-1); % Index offset to get same channel of next dataset
+                else
+                    offset = (channels)*(i-1); % Index offset to get same channel of next dataset
+                end
+                
+                y = zeros(size(data,1),length(selectedData)*4); % Initialize
+                y(:,1+offset) = data(:,1);
+                y(:,2+offset) = data(:,2);
+                y(:,3+offset) = data(:,3);
+                
+                if(taskChannelOn == 1)
+                    y(:,4+offset) = tasks;
+                end
+              
+                for c = 1:channels+taskChannelOn
+                    if(enabledChannels(1,c) == 1)
+                        % Store min and max Y value
+                        tempMin = min(min(y(:,c)));
+                        tempMax = max(max(y(:,c)));
+
+                        if(yMin == 0 && yMax == 0) % Initial value
+                            yMin = tempMin;
+                            yMax = tempMax;
+                        else % Update value
+                            if(tempMin < yMin)
+                                yMin = tempMin;
+                            end
+
+                            if(tempMax > yMax)
+                                yMax = tempMax;
+                            end
+                        end
+                        
+                        % Plot selected channels
+                        set(handles.plotHandle(c+offset),'YData',eval(sprintf('y(:,%u)',c+offset)),'Xdata',x);
+                        set(handles.plotHandle(c+offset),'Color',colorMap(value*c,:)); % Set color of each line to a color according to combination of channel and dataset
+                    end
+                end
+                set(handles.textStatus,'String','Plot updated.');
+            else
+                set(handles.textStatus,'String','Data not available: First sample and/or process data.');
+            end
+        end
+        
+        % Set Y scaling manually (fix for auto scaling)
+        set(handles.axesRealTime,'YLimMode','manual');
+        set(handles.axesRealTime,'YLim',[yMin yMax]);
+        get(handles.axesRealTime,'YLim')
+        yMin
+        yMax
+        drawnow;
+    else
+        return;
+    end
+
 
 
 
@@ -550,8 +725,9 @@ function radioRealTime_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioRealTime
 off = [handles.radioSamples;handles.radioTasks];
 mutual_exclude(off);
+set(handles.panelTasks,'Visible','off');
+set(handles.editSamples,'Visible','off');
 % set(handles.editSamples,'Visible','off');
-% set(handles.panelTasks,'Visible','off');
 % set(handles.panelRealTime,'Visible','on');
 % set(handles.titleSamplingSpeed,'Visible','on');
 % set(handles.textSamplingSpeed,'Visible','on');
@@ -574,8 +750,8 @@ function radioTasks_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioTasks
 off = [handles.radioSamples;handles.radioRealTime];
 mutual_exclude(off);
+set(handles.panelTasks,'Visible','on');
 % set(handles.editSamples,'Visible','off');
-% set(handles.panelTasks,'Visible','on');
 % set(handles.panelRealTime,'Visible','off');
 % set(handles.titleSamplingSpeed,'Visible','off');
 % set(handles.menuTrainState,'Visible','off');
@@ -594,8 +770,9 @@ function radioSamples_Callback(hObject, eventdata, handles)
 % Hint: get(hObject,'Value') returns toggle state of radioSamples
 off = [handles.radioTasks;handles.radioRealTime];
 mutual_exclude(off);
+set(handles.panelTasks,'Visible','off');
+set(handles.editSamples,'Visible','on');
 % set(handles.editSamples,'Visible','on');
-% set(handles.panelTasks,'Visible','off');
 % set(handles.panelRealTime,'Visible','off');
 % set(handles.titleSamplingSpeed,'Visible','off');
 % set(handles.menuTrainState,'Visible','off');
@@ -627,15 +804,6 @@ function buttonAddTask_Callback(hObject, eventdata, handles)
 
         set(handles.editIndex,'String',num2str(index + 1));
     end
- 
-% --- Executes on selection change in listTasks.
-function listTasks_Callback(hObject, eventdata, handles)
-% hObject    handle to listTasks (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Hints: contents = cellstr(get(hObject,'String')) returns listTasks contents as cell array
-%        contents{get(hObject,'Value')} returns selected item from listTasks
 
 function editTaskDuration_Callback(hObject, eventdata, handles)
 % hObject    handle to editTaskDuration (see GCBO)
@@ -712,6 +880,65 @@ else
     guidata(gcbo,handles);
 end
 
+function editSamples_Callback(hObject, eventdata, handles)
+% hObject    handle to editSamples (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: get(hObject,'String') returns contents of editSamples as text
+%        str2double(get(hObject,'String')) returns contents of editSamples as a double
+
+function editDecimationFactor_Callback(hObject, eventdata, handles)
+% hObject    handle to editDecimationFactor (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: get(hObject,'String') returns contents of editDecimationFactor as text
+%        str2double(get(hObject,'String')) returns contents of editDecimationFactor as a double
+
+if(getNumberOfSamples(handles.fNIRS) > 0) % Data is available for processing
+    % Check input
+    resampleRatio = str2double(get(hObject,'String'));
+    if(resampleRatio <= 0) % Invalid input
+        set(hObject,'String','1');
+        set(handles.textStatus,'String','Enter a valid integer decimation factor.');
+        return;
+    end
+    
+    % Preprocess (prepare and check data for processing step)
+    [processable,handles.fNIRS,msg] = preProcess(handles.fNIRS,resampleRatio);
+
+    % Update GUIDATA
+    guidata(gcbo,handles);
+
+    if(processable == 1)
+        set(handles.buttonProcess,'Enable','on');
+        set(handles.buttonProcess,'String','Process');
+    else
+        set(handles.buttonProcess,'Enable','off');
+        set(handles.textStatus,'String',msg);
+    end
+else
+    set(handles.buttonProcess,'String','Process');
+    set(handles.buttonProcess,'Enable','off');
+end
+
+% --- Executes on button press in buttonSaveAsNIRS.
+function buttonSaveAsNIRS_Callback(hObject, eventdata, handles)
+% hObject    handle to buttonSaveAsNIRS (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+saveAsNIRS(handles.fNIRS)
+
+% --- Executes on selection change in listPlotOutput.
+function listPlotOutput_Callback(hObject, eventdata, handles)
+% hObject    handle to listPlotOutput (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+redrawPlot(handles);
+
 % --- Executes on selection change in menuADCGain.
 function menuADCGain_Callback(hObject, eventdata, handles)
 % hObject    handle to menuADCGain (see GCBO)
@@ -769,10 +996,21 @@ function buttonProcess_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 set(hObject,'String','Processing...');
-processData(handles.fNIRS);
-
-set(hObject,'String','Data processed');
-set(hObject,'Enable','off');
+[processed,fNIRS] = processData(handles.fNIRS);
+if(processed == 1)
+    handles.fNIRS = fNIRS;
+    guidata(gcbo,handles)
+    set(hObject,'String','Data processed');
+    set(hObject,'Enable','off');
+    set(handles.buttonClassify,'Enable','on');
+    % Get variables and save data (backup)
+    fNIRS = store(handles.fNIRS);
+    save('tempfNIRSSave','-struct','fNIRS');
+    save('tempWorkspaceSave');
+else
+    set(hObject,'String','Process');
+    set(handles.textStatus,'String','Processing of data failed. Try again or create a new dataset.');
+end
 
 % --- Executes on button press in buttonStartSerial.
 function buttonStartSerial_Callback(hObject, eventdata, handles)
@@ -789,6 +1027,9 @@ if(get(hObject,'Value') == 1)
     try
         openSerialConnection(handles,COM,baudRate);
         set(handles.textStatus,'String','Connected to Arduino!');
+        set(handles.menuADCGain,'Enable','on');
+        set(handles.buttonStart,'Enable','on');
+        set(handles.sliderSamplingDelay,'Enable','on');
     catch exception
         set(handles.textStatus,'String','Check connection with Arduino!');
         set(hObject,'Value',0); % Unset button
@@ -819,6 +1060,7 @@ s = handles.serialConnection;
               'Yes','No','Yes'); 
             switch selection 
               case 'Yes' % Continue
+               
                 % Reset process button
                 set(handles.buttonProcess,'String','Process data');
                   
@@ -844,9 +1086,10 @@ s = handles.serialConnection;
                     end
                 elseif(get(handles.radioTasks,'Value') == 1)
                     amountTasks = str2double(get(handles.editIndex,'String')) - 1
-                    tasks = get(handles.arrayTasks,'Data')
                     if(amountTasks > 0)
                         sample('tasks', handles);
+                    else
+                        set(handles.textStatus,'String','Warning: setup tasks before starting the sampling process.');
                     end
                 else
                     set(handles.textStatus,'String','Select a mode!');
@@ -893,6 +1136,27 @@ if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgr
     set(hObject,'BackgroundColor','white');
 end
 
+set(hObject,'Min',1);
+set(hObject,'Max',1);
+set(hObject,'String',{'Rest';'Breath-hold after expiration';'Breath-hold after inspiration';'Cold pressor test';'Speed reading'});
+set(hObject,'Value',1);
+
+% --- Executes during object creation, after setting all properties.
+function listPlotOutput_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to listPlotOutput (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: listbox controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+set(hObject,'Min',1);
+set(hObject,'Max',6); % Max - Min > 1 => multiselection
+set(hObject,'String',{'Raw intensity data';'Downsampled data';'Detrended data';'Filtered data';'Normalized data';'Hb data'});
+
 % --- Executes during object creation, after setting all properties.
 function editSamples_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to editSamples (see GCBO)
@@ -905,50 +1169,6 @@ if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgr
     set(hObject,'BackgroundColor','white');
 end
 set(hObject,'String','1000');
-
-function editSamples_Callback(hObject, eventdata, handles)
-% hObject    handle to editSamples (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Hints: get(hObject,'String') returns contents of editSamples as text
-%        str2double(get(hObject,'String')) returns contents of editSamples as a double
-
-function editDecimationFactor_Callback(hObject, eventdata, handles)
-% hObject    handle to editDecimationFactor (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% Hints: get(hObject,'String') returns contents of editDecimationFactor as text
-%        str2double(get(hObject,'String')) returns contents of editDecimationFactor as a double
-
-if(getNumberOfSamples(handles.fNIRS) > 0) % Data is available for processing
-    % Check input
-    resampleRatio = str2double(get(hObject,'String'));
-    if(resampleRatio <= 0) % Invalid input
-        set(hObject,'String','1');
-        set(handles.textStatus,'String','Enter a valid integer decimation factor.');
-        return;
-    end
-    
-    % Preprocess (prepare and check data for processing step)
-    [processable,handles.fNIRS,msg] = preProcess(handles.fNIRS,resampleRatio);
-
-    % Update GUIDATA
-    guidata(gcbo,handles);
-
-    if(processable == 1)
-        set(handles.buttonProcess,'Enable','on');
-        set(handles.buttonProcess,'String','Reprocesses');
-        set(handles.buttonProcess,'Enable','on');
-    else
-        set(handles.buttonProcess,'Enable','off');
-        set(handles.textStatus,'String',msg);
-    end
-else
-    set(handles.buttonProcess,'String','Process');
-    set(handles.buttonProcess,'Enable','off');
-end
 
 % --- Executes during object creation, after setting all properties.
 function editDecimationFactor_CreateFcn(hObject, eventdata, handles)
@@ -1021,6 +1241,7 @@ if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgr
     set(hObject,'BackgroundColor','white');
 end
 set(hObject,'Value',1);
+set(hObject,'Enable','off');
 
 % --- Executes during object creation, after setting all properties.
 function buttonProcess_CreateFcn(hObject, eventdata, handles)
@@ -1062,12 +1283,13 @@ if isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColo
 end
 
 min = 0;
-max = 100;
+max = 1000;
 
 set(hObject, 'SliderStep', [1,10]/(max - min)); % Step size when click on arrow and when on background (percent change)
 set(hObject, 'Min', min);
 set(hObject, 'Max', max);
 set(hObject, 'Value', 25);
+set(hObject, 'Enable','off');
 
 % --- Executes during object creation, after setting all properties.
 function buttonStart_CreateFcn(hObject, eventdata, handles)
@@ -1075,13 +1297,14 @@ function buttonStart_CreateFcn(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    empty - handles not created until after all CreateFcns called
 set(hObject,'Value',0);
+set(hObject,'Enable','off');
 
 % --- Executes during object creation, after setting all properties.
 function textStatus_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to textStatus (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    empty - handles not created until after all CreateFcns called
-set(hObject,'String','');
+set(hObject,'String','Start by connecting to an Arduino or loading data from file.');
 
 % --- Executes during object creation, after setting all properties.
 function textSamplingSpeed_CreateFcn(hObject, eventdata, handles)
@@ -1097,6 +1320,7 @@ function textADCConfiguration_CreateFcn(hObject, eventdata, handles)
 % handles    empty - handles not created until after all CreateFcns called
 
 set(hObject,'String','');
+set(hObject,'Enable','off');
 
 % --- Executes during object creation, after setting all properties.
 function buttonStartSerial_CreateFcn(hObject, eventdata, handles)
@@ -1145,3 +1369,143 @@ switch selection
     case 'No'
         return
 end
+
+% --- Executes on selection change in listChannelOutput.
+function listChannelOutput_Callback(hObject, eventdata, handles)
+% hObject    handle to listChannelOutput (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+redrawPlot(handles);
+
+% --- Executes during object creation, after setting all properties.
+function listChannelOutput_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to listChannelOutput (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: listbox controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+set(hObject,'Min',1);
+set(hObject,'Max',3); % Max - Min > 1 => multiselection
+
+set(hObject,'String',{'Channel 1';'Channel 2';'Channel 3';'Task'});
+
+
+% --- Executes on button press in buttonLoadNirs.
+function buttonLoadNirs_Callback(hObject, eventdata, handles)
+% hObject    handle to buttonLoadNirs (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Show file browseer
+[filename, path, filterIndex] = uigetfile({'*.NIRS','NIRS file (*.NIRS)';'*.*','All files'}, 'Load NIRS file');
+
+if(filterIndex ~= 0)   % The user selected a file
+    dataLoadedGUIUpdate(handles);
+    
+    [data,samples,sampleRate] = loadNIRSFile(path, filename);
+    resampleRatio = str2double(get(handles.editDecimationFactor,'String'));
+    
+    [processable,data,msg] = preProcess(data,resampleRatio);
+    set(handles.buttonClassify,'Enable','off');
+    
+    if(processable == 1)
+        % Update handles structure
+        handles.fNIRS = data;
+        guidata(gcbo, handles);
+        
+        % Update GUI
+        set(handles.textSamplesCaptured,'String',sprintf('%u',samples));
+        set(handles.textSamplingSpeed,'String',sprintf('%f',sampleRate));
+        set(handles.buttonProcess,'Enable','on');
+        
+        % Update plot output
+        set(handles.listPlotOutput,'Enable','on');
+        set(handles.listChannelOutput,'Enable','on');
+        
+        set(handles.listPlotOutput,'Value',1);
+        amount = size(get(handles.listChannelOutput,'String'),1);
+        selected = ones(amount,1);
+        for n = 1:amount
+            selected(n) = n;
+        end
+        set(handles.listChannelOutput,'Value',selected);
+        redrawPlot(handles);
+        
+        FFTData = getData(handles.fNIRS,'raw');
+        calculateFFT(FFTData,1,getSamplingFrequency(handles.fNIRS),handles);
+    else
+        set(handles.buttonProcess,'Enable','off');
+        set(handles.textStatus,'String',msg);
+        set(handles.textStatus,'String','File is not processable, too few samples captured.');
+    end
+end
+
+% --- Executes during object creation, after setting all properties.
+function buttonLoadNirs_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to buttonLoadNirs (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+
+% --- Executes on selection change in listTasks.
+function listTasks_Callback(hObject, eventdata, handles)
+% hObject    handle to listTasks (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: contents = cellstr(get(hObject,'String')) returns listTasks contents as cell array
+%        contents{get(hObject,'Value')} returns selected item from listTasks
+
+
+% --- Executes on button press in buttonClassify.
+function buttonClassify_Callback(hObject, eventdata, handles)
+% hObject    handle to buttonClassify (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+set(hObject,'String','Processing...');
+data = getData(handles.fNIRS,'Hb');
+
+tasks = getTasks(handles.fNIRS,'downsampled');
+if(size(data,1) == size(tasks,1))
+    predictions = Machine_learning(data(:,2:3),tasks);
+%     contingency_table(tasks,predictions)
+    default = tasks(1);
+    figure();
+    hold on;
+    for n = 1:size(data,1)
+        if(tasks(n) == default)
+            if(tasks(n) == predictions(n))
+                scatter(data(n,2),data(n,3),'MarkerFaceColor','g','MarkerEdgeColor','g');
+            else
+                scatter(data(n,2),data(n,3),'MarkerFaceColor','g','MarkerEdgeColor','r');
+            end            
+        else
+            if(tasks(n) == predictions(n))
+                scatter(data(n,2),data(n,3),'MarkerFaceColor','b','MarkerEdgeColor','g');
+            else
+                scatter(data(n,2),data(n,3),'MarkerFaceColor','b','MarkerEdgeColor','r');
+            end 
+        end
+    end
+    hold off;
+elseif(getTasksSet(handles.fNIRS) == 1)
+    set(handles.textStatus,'String','Error: task and dataset are not of same size. Make sure that they are both correctly set.');
+else
+    set(handles.textStatus,'String','Can''t classify data tasks aren''t set.');
+end
+set(hObject,'String','Data classified');
+
+% --- Executes during object creation, after setting all properties.
+function buttonClassify_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to buttonClassify (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+set(hObject,'String','Classify data');
+set(hObject,'Enable','off');

@@ -84,14 +84,14 @@ deltaODArray(:,2) = deltaODArray(:,2)/(lp*DPF2);
 
 extInv = inv(extCoef'*extCoef)*extCoef'; %Linear inversion operator
 
-% Sum temporal changes to get time course -> NEEDED OR NOT?
-for j = 1:size(deltaODArray,2) % Columns (containing measurements)
-    temp = 0;
-    for i = 1:size(deltaODArray,1) % Rows
-        deltaODArray(i,j) = temp + deltaODArray(i,j);
-        temp = deltaODArray(i,j);
-    end
-end
+% % Sum temporal changes to get time course -> NEEDED OR NOT?
+% for j = 1:size(deltaODArray,2) % Columns (containing measurements)
+%     temp = 0;
+%     for i = 1:size(deltaODArray,1) % Rows
+%         deltaODArray(i,j) = temp + deltaODArray(i,j);
+%         temp = deltaODArray(i,j);
+%     end
+% end
 
 Hb = extInv*deltaODArray(:,1:2)'; % Find HbO and HbR
 HbT = Hb(1,:) + Hb(2,:);
